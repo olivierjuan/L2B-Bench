@@ -30,6 +30,13 @@ from .model import GNNPolicy
 TOP_K = (1, 3, 5, 10)
 
 
+def get_device() -> "torch.device":
+    """CUDA when available (the campaign nodes' A5000), CPU otherwise."""
+    import torch
+
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 @dataclass
 class GraphBatch:
     """A mini-batch of bipartite graphs, collated by concatenation."""
@@ -96,6 +103,19 @@ def batched_tensors(batch: GraphBatch):
         batch.edge_index,
         batch.edge_attr,
         batch.variable_features,
+    )
+
+
+def to_device(batch: GraphBatch, device: "torch.device") -> GraphBatch:
+    """A copy of the batch with every tensor on ``device``."""
+    return GraphBatch(
+        constraint_features=batch.constraint_features.to(device),
+        edge_index=batch.edge_index.to(device),
+        edge_attr=batch.edge_attr.to(device),
+        variable_features=batch.variable_features.to(device),
+        candidates=[c.to(device) for c in batch.candidates],
+        choices=batch.choices.to(device),
+        candidate_scores=[s.to(device) for s in batch.candidate_scores],
     )
 
 
@@ -181,9 +201,11 @@ def save_checkpoint(policy: GNNPolicy, path: str | Path, extra: dict | None = No
     torch.save({"state_dict": policy.state_dict(), **(extra or {})}, path)
 
 
-def load_checkpoint(path: str | Path) -> GNNPolicy:
+def load_checkpoint(path: str | Path, device: "torch.device | None" = None) -> GNNPolicy:
     """Load a policy from a :func:`save_checkpoint` file (weights only, eval mode)."""
     policy = GNNPolicy()
-    policy.load_state_dict(torch.load(path, weights_only=True)["state_dict"])
+    policy.load_state_dict(torch.load(path, weights_only=True, map_location="cpu")["state_dict"])
+    if device is not None:
+        policy.to(device)
     policy.eval()
     return policy

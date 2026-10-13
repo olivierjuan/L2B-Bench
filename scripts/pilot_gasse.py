@@ -36,16 +36,28 @@ from gyozas.runner import Cell, ExperimentConfig, Method, Runner
 from l2b_bench.methods.baselines import BASELINE_METHODS
 from l2b_bench.methods.gasse.collect import collect
 from l2b_bench.methods.gasse.policy import gasse_method
-from l2b_bench.methods.gasse.train import collate, pretrain, process, save_checkpoint
+from l2b_bench.methods.gasse.train import (
+    collate,
+    get_device,
+    pretrain,
+    process,
+    save_checkpoint,
+    to_device,
+)
 from l2b_bench.methods.gasse.model import GNNPolicy
 
-RESULTS = Path(__file__).resolve().parent.parent / "results" / "pilot_gasse"
+def parse_family(text: str) -> dict:
+    """``"500x1000x0.05"`` → ``dict(n_rows=500, n_cols=1000, density=0.05)``."""
+    rows, cols, density = text.split("x")
+    return dict(n_rows=int(rows), n_cols=int(cols), density=float(density))
 
-# The pilot's instance families — the paper's set covers, scaled down so a
-# CPU run finishes in minutes. Training and evaluation draws come from
-# different generator seeds (disjoint instances); the evaluation family is
-# harder than the training one (default solver: ~600 B&B nodes per instance)
-# so the node counts are not degenerate.
+
+# The pilot's defaults — the paper's set covers, scaled down so a CPU run
+# finishes in minutes. Training and evaluation draws come from different
+# generator seeds (disjoint instances); the evaluation family is harder than
+# the training one (default solver: ~600 B&B nodes per instance) so the node
+# counts are not degenerate. Both families are CLI-overridable for the
+# cluster campaigns.
 TRAIN_FAMILY = dict(n_rows=200, n_cols=250, density=0.10)
 TRAIN_RNG_SEED = 123
 EVAL_FAMILY = dict(n_rows=500, n_cols=600, density=0.10)
@@ -58,7 +70,7 @@ EVAL_BUDGET = {"limits/time": 120.0, "display/verblevel": 0}
 BATCH_SIZE = 32
 
 
-def write_eval_instances(strate_root: Path) -> None:
+def write_eval_instances(strate_root: Path, eval_family: dict) -> None:
     """Write the pilot's held-out set covers as a one-split strate."""
     if strate_root.exists() and any((strate_root / "test").glob("*.mps")):
         return
@@ -66,24 +78,24 @@ def write_eval_instances(strate_root: Path) -> None:
 
     split = strate_root / "test"
     split.mkdir(parents=True, exist_ok=True)
-    generator = SetCoverGenerator(rng=np.random.default_rng(EVAL_RNG_SEED), **EVAL_FAMILY)
+    generator = SetCoverGenerator(rng=np.random.default_rng(EVAL_RNG_SEED), **eval_family)
     for i in range(N_EVAL_INSTANCES):
         model = next(generator)
         model.writeProblem(filename=str(split / f"sc_{i:02d}.mps"), genericnames=True, verbose=False)
     print(f"[instances] wrote {N_EVAL_INSTANCES} set covers to {split}")
 
 
-def collect_expert_data(n_episodes: int) -> list:
+def collect_expert_data(n_episodes: int, train_family: dict, time_limit: float = 60.0) -> list:
     """Explore-then-strong-branch trajectories on the training family."""
     from gyozas.instances import SetCoverGenerator
 
-    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **TRAIN_FAMILY)
+    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
     result = collect(
         generator,
         n_episodes=n_episodes,
         seeds=list(range(n_episodes)),
         expert_probability=0.5,  # the paper's exploration regime
-        time_limit=60.0,
+        time_limit=time_limit,
     )
     solved = sum(1 for s in result.statuses if s == "optimal")
     print(
@@ -94,40 +106,46 @@ def collect_expert_data(n_episodes: int) -> list:
     return result.samples
 
 
-def train_policy(samples: list, epochs: int, checkpoint: Path) -> None:
+def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dict) -> None:
     """The official imitation-learning loop: pretrain, then epochs of Adam."""
     import torch
 
     model = GNNPolicy()
     shuffle = np.random.default_rng(0)
 
-    def batches():
+    def batches(device):
         order = shuffle.permutation(len(samples))
-        return [collate([samples[i] for i in order[k : k + BATCH_SIZE]]) for k in range(0, len(order), BATCH_SIZE)]
+        return [
+            to_device(collate([samples[i] for i in order[k : k + BATCH_SIZE]]), device)
+            for k in range(0, len(order), BATCH_SIZE)
+        ]
 
-    n_layers = pretrain(model, batches())
+    device = get_device()
+    print(f"[train] device: {device}")
+    model = model.to(device)
+    n_layers = pretrain(model, batches(device))
     print(f"[train] froze {n_layers} PreNorm layers")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     for epoch in range(1, epochs + 1):
-        stats = process(model, batches(), optimizer=optimizer)
+        stats = process(model, batches(device), optimizer=optimizer)
         kacc = " ".join(f"acc@{k}={a:.2f}" for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True))
         print(f"[train] epoch {epoch:3d}  loss={stats['loss']:.4f}  {kacc}")
 
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
     save_checkpoint(
-        model,
+        model.cpu(),
         checkpoint,
-        extra={"n_samples": len(samples), "epochs": epochs, "train_family": TRAIN_FAMILY},
+        extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
     )
     print(f"[train] checkpoint saved to {checkpoint}")
 
 
-def run_benchmark(checkpoint: Path) -> dict:
+def run_benchmark(checkpoint: Path, results_dir: Path) -> dict:
     """The trained policy vs the classical baselines on the pilot grid."""
     methods: dict[str, Method] = dict(BASELINE_METHODS)
     methods["gasse"] = gasse_method(checkpoint)
-    strate_root = RESULTS / "instances" / "setcover_pilot"
+    strate_root = results_dir / "instances" / "setcover_pilot"
     config = ExperimentConfig(
         cells=[
             Cell(
@@ -141,14 +159,14 @@ def run_benchmark(checkpoint: Path) -> dict:
             for name in methods
         ]
     )
-    runner = Runner(config, methods, {"setcover_pilot": strate_root}, RESULTS / "runs")
+    runner = Runner(config, methods, {"setcover_pilot": strate_root}, results_dir / "runs")
     report = runner.run()
     for cell_key, counts in report.items():
         print(f"[runner] {cell_key}: {counts['executed']} executed, {counts['skipped']} skipped")
-    return summarize(runner, config, methods)
+    return summarize(runner, config, results_dir)
 
 
-def summarize(runner: Runner, config: ExperimentConfig, methods: dict[str, Method]) -> dict:
+def summarize(runner: Runner, config: ExperimentConfig, results_dir: Path) -> dict:
     """Per-method mean nodes, paired ratios against the default solver (R6.2)."""
     nodes: dict[str, dict[str, float]] = {}
     statuses: dict[str, dict[str, str]] = {}
@@ -169,7 +187,7 @@ def summarize(runner: Runner, config: ExperimentConfig, methods: dict[str, Metho
         for method, per_instance in nodes.items()
         if method != "default"
     }
-    sgms = {method: sgm_of_ratios(per_instance, nodes["default"]) for method, per_instance in ratios.items()}
+    sgms = {method: sgm_of_ratios(nodes[method], nodes["default"]) for method in ratios}
 
     print("\nPilot summary — mean B&B nodes per instance (default solver = 1.000x):")
     header = f"{'instance':<10}" + "".join(f"{m:>12}" for m in nodes)
@@ -189,8 +207,8 @@ def summarize(runner: Runner, config: ExperimentConfig, methods: dict[str, Metho
         "n_instances": len(next(iter(nodes.values()))),
         "n_seeds": len(EVAL_SEEDS),
     }
-    (RESULTS / "summary.json").write_text(json.dumps(summary, indent=2, default=float))
-    print(f"\n[summary] written to {RESULTS / 'summary.json'}")
+    (results_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=float))
+    print(f"\n[summary] written to {results_dir / 'summary.json'}")
     return summary
 
 
@@ -199,22 +217,32 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=20, help="collection episodes (default 20)")
     parser.add_argument("--epochs", type=int, default=20, help="training epochs (default 20)")
     parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "results" / "pilot_gasse",
+        help="where instances, checkpoint, runs, and summary are written",
+    )
+    parser.add_argument("--train-family", type=parse_family, default=TRAIN_FAMILY, metavar="RxCxDENSITY")
+    parser.add_argument("--eval-family", type=parse_family, default=EVAL_FAMILY, metavar="RxCxDENSITY")
+    parser.add_argument("--collect-time-limit", type=float, default=60.0, help="per-episode collection budget")
+    parser.add_argument(
         "--retrain",
         action="store_true",
         help="re-collect and re-train even if a checkpoint exists (default: reuse it)",
     )
     args = parser.parse_args()
 
-    write_eval_instances(RESULTS / "instances" / "setcover_pilot")
-    checkpoint = RESULTS / "gasse.pt"
+    results_dir: Path = args.results_dir
+    write_eval_instances(results_dir / "instances" / "setcover_pilot", args.eval_family)
+    checkpoint = results_dir / "gasse.pt"
     if args.retrain or not checkpoint.exists():
-        samples = collect_expert_data(args.episodes)
+        samples = collect_expert_data(args.episodes, args.train_family, time_limit=args.collect_time_limit)
         if not samples:
             raise SystemExit("no expert samples collected — increase --episodes")
-        train_policy(samples, args.epochs, checkpoint)
+        train_policy(samples, args.epochs, checkpoint, args.train_family)
     else:
         print(f"[train] reusing checkpoint {checkpoint}")
-    run_benchmark(checkpoint)
+    run_benchmark(checkpoint, results_dir)
 
 
 if __name__ == "__main__":

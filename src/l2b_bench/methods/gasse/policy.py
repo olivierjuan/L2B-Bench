@@ -31,22 +31,26 @@ class GassePolicy:
 
     def __init__(self, model: GNNPolicy) -> None:
         self.model = model
+        self.device = next(model.parameters()).device
 
     @classmethod
     def from_checkpoint(cls, path: str | Path) -> "GassePolicy":
-        return cls(load_checkpoint(path))
+        from .train import get_device
+
+        return cls(load_checkpoint(path, device=get_device()))
 
     def select_action(self, observation: Any, action_set: NDArray) -> int:
         obs = observation
+        device = self.device
         edge_index = torch.as_tensor(obs.edge_features.indices, dtype=torch.long)
         with torch.no_grad():
             logits = self.model(
-                torch.as_tensor(obs.row_features, dtype=torch.float32),
-                edge_index,
-                torch.as_tensor(obs.edge_features.values, dtype=torch.float32).reshape(-1, 1),
-                torch.as_tensor(obs.variable_features, dtype=torch.float32),
+                torch.as_tensor(obs.row_features, dtype=torch.float32).to(device),
+                edge_index.to(device),
+                torch.as_tensor(obs.edge_features.values, dtype=torch.float32).reshape(-1, 1).to(device),
+                torch.as_tensor(obs.variable_features, dtype=torch.float32).to(device),
             )
-        candidates = torch.as_tensor(np.asarray(action_set), dtype=torch.long)
+        candidates = torch.as_tensor(np.asarray(action_set), dtype=torch.long).to(device)
         return int(candidates[logits[candidates].argmax()])
 
 
