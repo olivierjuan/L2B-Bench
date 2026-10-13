@@ -16,8 +16,8 @@ from gyozas import ProtocolSnapshot
 
 snapshot = ProtocolSnapshot.capture(
     name="treerope-g2",
-    strate_dirs={"miplib_s": "../learn2branch-benchmark/data/miplib_s",
-                 "milp_l": "../learn2branch-benchmark/data/milp_l"},
+    strate_dirs={"miplib_s": "data/miplib_s",
+                 "milp_l": "data/milp_l"},
     provenance={"document": "protocol/G2.md", "decided_by": "Olivier JUAN"},
 )
 snapshot.save("protocol/treerope-g2.json")
