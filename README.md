@@ -22,7 +22,8 @@ data/       The three strates of the universal trunk, with their frozen splits
             git; rebuild them with scripts/build_strate_data.py, then verify
             with Strate.verify().
 configs/    Experiment grids (ExperimentConfig JSON): baselines, methods.
-scripts/    Data-building scripts.
+scripts/    Data-building and campaign scripts (e.g. pilot_gasse.py: the
+            end-to-end pilot — collect, train, evaluate).
 src/        Method implementations: one package per paper, each exposing a
             policy factory consumable by the gyozas runner. Ported from the
             official repositories (see GYOZAS docs/references.md).
@@ -57,8 +58,10 @@ runner.run()
 
 - [x] Strate data + signed manifests (moved from GYOZAS)
 - [x] Baseline grid (default solver, pscost, relpscost)
-- [ ] Gasse 2019 pilot: collect SB trajectories → train GCNN → evaluate (in
-      progress, `src/l2b_bench/methods/gasse/`)
+- [x] Gasse 2019 pilot: collect SB trajectories → train GCNN → evaluate vs
+      the baselines through the runner
+      (`src/l2b_bench/methods/gasse/`, `scripts/pilot_gasse.py`,
+      `tests/test_gasse_pilot.py`)
 - [ ] The seven other methods
 - [ ] G2 protocol freeze
 - [ ] Full campaign (methods × strates × 5 seeds) on the lab cluster
