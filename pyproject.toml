@@ -8,6 +8,8 @@ dependencies = [
     # The harness. Path dependency until gyozas is published on PyPI; the
     # benchmark never reimplements harness mechanisms.
     "gyozas",
+    "torch",
+    "torch-geometric",
 ]
 
 [build-system]
@@ -19,6 +21,12 @@ packages = ["src/l2b_bench"]
 
 [tool.uv.sources]
 gyozas = { path = "../gyozas" }
+torch = { index = "pytorch-cpu" }
 
 [dependency-groups]
 dev = ["pytest"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
