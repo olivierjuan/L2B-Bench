@@ -27,6 +27,10 @@ from l2b_bench.methods.lookback.train import (
     smoothed_target,
 )
 
+def all_children(samples: list) -> list[int]:
+    """The full-dataset batch: every sample a child, in collection order."""
+    return list(range(len(samples)))
+
 
 @pytest.fixture(scope="module")
 def collected():
@@ -99,7 +103,7 @@ class TestTrain:
     def test_pat_term_runs_and_train_loss_is_finite(self, collected):
         model = GNNPolicy()
         pairs = pair_parent_children(collected.samples)
-        batches = [collate_pairs(collected.samples, pairs)]
+        batches = [collate_pairs(collected.samples, all_children(collected.samples), pairs)]
         pretrain(model, [lb.batch for lb in batches])
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         process_lookback(model, batches)  # a valid pass first
@@ -109,10 +113,40 @@ class TestTrain:
         assert np.isfinite(stats["pat"])
         assert stats["kacc"].shape == (4,)
 
+    def test_shuffled_batches_keep_every_pair(self, collected):
+        """The campaign's training loop: shuffled minibatches smaller than
+        the dataset, each pair's parent riding along in its child's batch.
+
+        This is the regression that killed campaign job 3806280 — chunk-local
+        index remapping broke on global pair indices once the dataset spanned
+        more than one chunk.
+        """
+        model = GNNPolicy()
+        samples = collected.samples
+        pairs = pair_parent_children(samples)
+        shuffle = np.random.default_rng(0)
+        order = shuffle.permutation(len(samples))
+        batch_size = 5  # several chunks, each smaller than the dataset
+        batches = [
+            collate_pairs(samples, list(order[k : k + batch_size]), pairs)
+            for k in range(0, len(order), batch_size)
+        ]
+        pretrain(model, [lb.batch for lb in batches])
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        stats = process_lookback(model, batches, optimizer=optimizer)
+        assert np.isfinite(stats["loss"])
+        assert np.isfinite(stats["pat"])
+        # Every pair contributes its PAT term no matter where the shuffle put
+        # the child: each batch's parent_of covers all its children's pairs.
+        total_children = sum(len(lb.lookback) for lb in batches)
+        total_pairs = sum(len(lb.parent_of) for lb in batches)
+        assert total_children == len(samples)
+        assert total_pairs == len(pairs)
+
     def test_loss_target_z_trains_too(self, collected):
         model = GNNPolicy()
         pairs = pair_parent_children(collected.samples)
-        batches = [collate_pairs(collected.samples, pairs, loss_target="z")]
+        batches = [collate_pairs(collected.samples, all_children(collected.samples), pairs, loss_target="z")]
         pretrain(model, [lb.batch for lb in batches])
         stats = process_lookback(model, batches, loss_target="z")
         assert np.isfinite(stats["loss"])
@@ -120,7 +154,7 @@ class TestTrain:
     def test_checkpoint_roundtrip(self, collected, tmp_path):
         model = GNNPolicy()
         pairs = pair_parent_children(collected.samples)
-        lb = collate_pairs(collected.samples, pairs)
+        lb = collate_pairs(collected.samples, all_children(collected.samples), pairs)
         pretrain(model, [lb.batch])
         path = tmp_path / "lookback.pt"
         save_checkpoint(model, path, extra={"n_samples": len(collected.samples), "method": "lookback"})
@@ -133,7 +167,7 @@ class TestPolicy:
     def test_lookback_method_is_runner_ready(self, collected, tmp_path):
         model = GNNPolicy()
         pairs = pair_parent_children(collected.samples)
-        pretrain(model, [collate_pairs(collected.samples, pairs).batch])
+        pretrain(model, [collate_pairs(collected.samples, all_children(collected.samples), pairs).batch])
         path = tmp_path / "lookback.pt"
         save_checkpoint(model, path)
         method = lookback_method(path)

@@ -96,21 +96,27 @@ class LookbackBatch:
 
 def collate_pairs(
     samples: list[LookbackSample],
+    child_indices: list[int],
     pair_of: dict[int, int],
     loss_target: str = LOSS_TARGET,
     epsilon: float = EPSILON,
 ) -> LookbackBatch:
-    """Collate children and their collected parents into one batch.
+    """Collate a batch of children and their collected parents.
 
-    ``pair_of`` maps a child sample's index to its parent sample's index
-    (:func:`.collect.pair_parent_children`). Children are collated first (in
-    ``samples`` order), then each parent is appended at the back.
+    ``child_indices`` are this batch's children (global indices into
+    ``samples``, in batch order — the training targets); ``pair_of`` maps a
+    global child index to its global parent index
+    (:func:`.collect.pair_parent_children`). The children are collated
+    first, then each paired child's parent graph is appended at the back —
+    a parent rides along in whatever batch its child lands in, so
+    shuffling never breaks the pairing.
     """
-    entries: list[LookbackSample] = list(samples)
-    parent_of: dict[int, int] = {}
-    for child_i in sorted(pair_of):
-        parent_of[child_i] = len(entries)
-        entries.append(samples[pair_of[child_i]])
+    entries: list[LookbackSample] = [samples[i] for i in child_indices]
+    parent_of: dict[int, int] = {}  # local child position -> parent position
+    for local, global_i in enumerate(child_indices):
+        if global_i in pair_of:
+            parent_of[local] = len(entries)
+            entries.append(samples[pair_of[global_i]])
     var_offsets = []
     offset = 0
     for entry in entries:
@@ -119,15 +125,15 @@ def collate_pairs(
     batch = collate(entries)
     lookback = torch.tensor(
         [
-            i in pair_of and lookback_condition(samples[pair_of[i]], samples[i])
-            for i in range(len(samples))
+            global_i in pair_of and lookback_condition(samples[pair_of[global_i]], samples[global_i])
+            for global_i in child_indices
         ],
         dtype=torch.bool,
     )
     if loss_target == "z":
         targets = [
-            torch.as_tensor(smoothed_target(sample, epsilon), dtype=torch.float32)
-            for sample in samples
+            torch.as_tensor(smoothed_target(samples[i], epsilon), dtype=torch.float32)
+            for i in child_indices
         ]
     else:
         targets = []
@@ -136,7 +142,7 @@ def collate_pairs(
     )
 
 
-def _to_device(batch: LookbackBatch, device: torch.device) -> LookbackBatch:
+def lb_to_device(batch: LookbackBatch, device: torch.device) -> LookbackBatch:
     return LookbackBatch(
         batch=to_device(batch.batch, device),
         parent_of=batch.parent_of,

@@ -242,13 +242,14 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         print(f"[train] {len(pairs)} parent-child pairs out of {len(samples)} samples")
 
         def batches(device):
+            # The batch holds children (global indices, shuffled); each paired
+            # child's parent graph rides along in whatever batch its child
+            # lands in — collate_pairs appends it, so shuffling never breaks
+            # the parent-child pairing.
             order = shuffle.permutation(len(samples))
             return [
                 lb_to_device(
-                    collate_pairs(
-                        [samples[i] for i in order[k : k + BATCH_SIZE]],
-                        {i - k: pairs[i] - k for i in order[k : k + BATCH_SIZE] if i in pairs and pairs[i] - k >= 0},
-                    ),
+                    collate_pairs(samples, list(order[k : k + BATCH_SIZE]), pairs),
                     device,
                 )
                 for k in range(0, len(order), BATCH_SIZE)
