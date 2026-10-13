@@ -22,10 +22,16 @@
 set -euo pipefail
 
 REPO=/fsmedium/work/rd/turing/L2B-Bench
-RESULTS=$REPO/results/gasse_gpu_v1
+RESULTS=$REPO/results/gasse_gpu_v2
 EPISODES=100
 EPOCHS=100
-TRAIN_FAMILY=500x1000x0.05   # the paper's training set covers
+# The paper trains AND tests on the same set-cover family — it never claims
+# cross-family transfer, and v1 (results/gasse_gpu_v1, trained 500x1000x0.05,
+# evaluated 500x600x0.10) confirmed it: top-1 agreement with the SB expert
+# collapses from 0.40 in-distribution to 0.07 out-of-distribution, and the
+# policy ends up 27x worse than the default solver. The pilot therefore
+# aligns the training family with the evaluation family.
+TRAIN_FAMILY=500x600x0.10
 EVAL_FAMILY=500x600x0.10     # the pilot's held-out evaluation family
 COLLECT_TIME_LIMIT=300       # per-episode budget during collection
 COLLECT_WORKERS=32           # parallel SCIP episodes (node has 64 cpus)
