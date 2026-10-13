@@ -21,5 +21,5 @@ loop every other method will follow:
 
 The trained policy then runs through the standard benchmark grid like any
 other method (fidelity profile ``gasse``), against the baselines of
-``learn2branch_benchmark.methods.BASELINE_METHODS``.
+``l2b_bench.methods.BASELINE_METHODS``.
 """

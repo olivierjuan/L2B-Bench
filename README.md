@@ -1,4 +1,6 @@
-# learn2branch-benchmark
+# l2b-bench
+
+https://github.com/olivierjuan/L2B-Bench
 
 The unified learn2branch benchmark: the eight methods of the literature
 (Gasse 2019, TreeGate 2021, T-BranT 2022, Lookback 2022, RetroBranching 2022,
@@ -39,7 +41,7 @@ uv sync   # installs gyozas (path dependency for now) and the method extras
 
 ```python
 from gyozas import ExperimentConfig, Runner
-from learn2branch_benchmark.methods import BASELINE_METHODS
+from l2b_bench.methods import BASELINE_METHODS
 
 config = ExperimentConfig.load("configs/baselines.json")
 runner = Runner(
@@ -56,7 +58,7 @@ runner.run()
 - [x] Strate data + signed manifests (moved from GYOZAS)
 - [x] Baseline grid (default solver, pscost, relpscost)
 - [ ] Gasse 2019 pilot: collect SB trajectories → train GCNN → evaluate (in
-      progress, `src/learn2branch_benchmark/methods/gasse/`)
+      progress, `src/l2b_bench/methods/gasse/`)
 - [ ] The seven other methods
 - [ ] G2 protocol freeze
 - [ ] Full campaign (methods × strates × 5 seeds) on the lab cluster
