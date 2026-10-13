@@ -155,6 +155,7 @@ def collect(
     seeds: list[int],
     expert_probability: float = 0.5,
     time_limit: float = GASSE_TIME_LIMIT,
+    on_episode: Any = None,
 ) -> CollectionResult:
     """Collect expert samples over ``n_episodes`` episodes.
 
@@ -171,6 +172,9 @@ def collect(
         each node; otherwise the episode explores on pseudocosts.
     time_limit:
         Per-episode SCIP time limit (the paper: 45 minutes).
+    on_episode:
+        Optional callback ``on_episode(done, status, n_nodes, n_samples)``
+        invoked after each episode — campaign progress reporting.
     """
     if len(seeds) < n_episodes:
         raise ValueError(f"{n_episodes} episodes need {n_episodes} seeds, got {len(seeds)}")
@@ -201,6 +205,8 @@ def collect(
             result.n_episodes += 1
             result.n_nodes += n_nodes
             result.statuses.append(status)
+            if on_episode is not None:
+                on_episode(result.n_episodes, status, n_nodes, len(samples))
     finally:
         env.close()
     return result

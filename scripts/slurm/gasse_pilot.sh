@@ -2,19 +2,20 @@
 #SBATCH --job-name=gasse-pilot
 #SBATCH --partition=vn
 #SBATCH --wckey=p12es:turing
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=64
+#SBATCH --exclusive
 #SBATCH --time=06:00:00
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
 
 # The Gasse 2019 pilot on the lab cluster's A5000 (partition vn; the GPUs are
-# not declared to SLURM — no --gres, the card is just there).
+# not declared to SLURM — no --gres, the card is just there). The node is
+# reserved exclusively: collection fans out over the CPUs (one SCIP per
+# worker), training runs on the GPU, evaluation is CPU-bound again.
 #
-# Collection is CPU-bound (SCIP strong branching), training runs on the GPU,
-# evaluation (default/pscost/relpscost/gasse x 5 seeds x 6 instances) is
-# CPU-bound again. The run is idempotent: a re-submission reuses the
-# checkpoint and skips the runner's completed records.
+# Everything is cached and idempotent: training instances, expert samples,
+# the checkpoint, and the runner's records all survive a restart — a
+# re-submission skips whatever is already done.
 #
 # Usage: sbatch scripts/slurm/gasse_pilot.sh
 
@@ -27,6 +28,7 @@ EPOCHS=100
 TRAIN_FAMILY=500x1000x0.05   # the paper's training set covers
 EVAL_FAMILY=500x600x0.10     # the pilot's held-out evaluation family
 COLLECT_TIME_LIMIT=300       # per-episode budget during collection
+COLLECT_WORKERS=32           # parallel SCIP episodes (node has 64 cpus)
 
 cd "$REPO"
 mkdir -p logs "$RESULTS"
@@ -35,17 +37,17 @@ echo "=== $(date) — job $SLURM_JOB_ID on $(hostname) ==="
 echo "cpus: $SLURM_CPUS_PER_TASK"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv || echo "no GPU visible!"
 
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export OPENBLAS_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=1      # parallelism is at the episode level, one thread per SCIP
 
-# The CUDA venv (torch cu126); falls back to CPU code paths if no GPU.
+# The CUDA venv (torch cu129); falls back to CPU code paths if no GPU.
 $REPO/.venv-gpu/bin/python scripts/pilot_gasse.py \
     --episodes "$EPISODES" \
     --epochs "$EPOCHS" \
     --train-family "$TRAIN_FAMILY" \
     --eval-family "$EVAL_FAMILY" \
     --collect-time-limit "$COLLECT_TIME_LIMIT" \
+    --collect-workers "$COLLECT_WORKERS" \
     --results-dir "$RESULTS"
 
 echo "=== $(date) — done ==="

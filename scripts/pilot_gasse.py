@@ -85,25 +85,120 @@ def write_eval_instances(strate_root: Path, eval_family: dict) -> None:
     print(f"[instances] wrote {N_EVAL_INSTANCES} set covers to {split}")
 
 
-def collect_expert_data(n_episodes: int, train_family: dict, time_limit: float = 60.0) -> list:
-    """Explore-then-strong-branch trajectories on the training family."""
+def _collect_one_episode(job):
+    """One collection episode in a worker process: its own env, its own SCIP.
+
+    The instance file and base seed fully determine the episode, so parallel
+    collection produces exactly the sequential campaign's data.
+    """
+    import os
+
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+    path, seed, expert_probability, time_limit = job
+    from gyozas.dynamics.branching import BranchingDynamics, ExtraBranchingActions
+    from gyozas.environment import Environment
+    from gyozas.informations.solve_status import SolveStatus
+    from gyozas.instances.files import FileGenerator
+    from gyozas.observations import NodeBipartite
+    from gyozas.seeds import SeedTriplet
+
+    from l2b_bench.methods.gasse.collect import GASSE_SCIP_PARAMS, collect_episode
+
+    scip_params = dict(GASSE_SCIP_PARAMS)
+    scip_params["limits/time"] = time_limit
+    scip_params["display/verblevel"] = 0
+    env = Environment(
+        instance_generator=FileGenerator(
+            directory=path.parent, pattern=path.name, sampling_mode="replace", rng=np.random.default_rng(0)
+        ),
+        observation_function=NodeBipartite(),
+        information_function=SolveStatus(),
+        scip_params=scip_params,
+        dynamics=BranchingDynamics(with_extra_actions=[ExtraBranchingActions.SKIP]),
+    )
+    try:
+        triplet = SeedTriplet.from_base_seed(seed)
+        env.seed(triplet.solver)
+        triplet.seed_python()
+        rng = np.random.default_rng(triplet.augmentation)
+        samples, n_nodes, status = collect_episode(env, rng, expert_probability)
+        return samples, n_nodes, status
+    finally:
+        env.close()
+
+
+def collect_expert_data(
+    n_episodes: int,
+    train_family: dict,
+    time_limit: float = 60.0,
+    cache: Path | None = None,
+    n_workers: int = 1,
+) -> list:
+    """Explore-then-strong-branch trajectories on the training family.
+
+    Instances are drawn once from the generator and written to disk (episode i
+    gets the i-th draw — identical to the sequential campaign), then episodes
+    run in parallel worker processes, each with its own SCIP environment.
+    With ``cache``, the collected samples are saved there and reloaded on the
+    next call — a restarted campaign never re-collects.
+    """
+    import torch
+
+    if cache is not None and cache.exists():
+        samples = torch.load(cache, weights_only=False)
+        print(f"[collect] reusing {len(samples)} cached expert samples from {cache}", flush=True)
+        return samples
+
     from gyozas.instances import SetCoverGenerator
 
+    # Deterministic instance pool: written once, reused across restarts.
+    instance_dir = cache.parent / "train_instances" if cache is not None else None
+    instance_dir = instance_dir or Path("train_instances")
+    instance_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
     generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
-    result = collect(
-        generator,
-        n_episodes=n_episodes,
-        seeds=list(range(n_episodes)),
-        expert_probability=0.5,  # the paper's exploration regime
-        time_limit=time_limit,
-    )
-    solved = sum(1 for s in result.statuses if s == "optimal")
+    for i in range(n_episodes):
+        path = instance_dir / f"train_{i:03d}.mps"
+        if not path.exists():
+            next(generator).writeProblem(filename=str(path), genericnames=True, verbose=False)
+        paths.append(path)
+    print(f"[collect] {n_episodes} training instances in {instance_dir}", flush=True)
+
+    jobs = [(path, i, 0.5, time_limit) for i, path in enumerate(paths)]
+    all_samples: list = []
+    statuses: list[str] = []
+    n_nodes_total = 0
+    if n_workers <= 1:
+        results = map(_collect_one_episode, jobs)
+        for done, (samples, n_nodes, status) in enumerate(results, 1):
+            all_samples.extend(samples)
+            statuses.append(status)
+            n_nodes_total += n_nodes
+            print(f"[collect] episode {done}/{n_episodes}: {status}, {n_nodes} nodes", flush=True)
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            futures = {pool.submit(_collect_one_episode, job): job for job in jobs}
+            for done, future in enumerate(as_completed(futures), 1):
+                samples, n_nodes, status = future.result()
+                all_samples.extend(samples)
+                statuses.append(status)
+                n_nodes_total += n_nodes
+                print(f"[collect] episode {done}/{n_episodes}: {status}, {n_nodes} nodes", flush=True)
+
+    solved = sum(1 for s in statuses if s == "optimal")
     print(
-        f"[collect] {result.n_episodes} episodes ({solved} optimal), "
-        f"{result.n_nodes} nodes, {len(result.samples)} expert samples"
+        f"[collect] {n_episodes} episodes ({solved} optimal), "
+        f"{n_nodes_total} nodes, {len(all_samples)} expert samples",
+        flush=True,
     )
-    print(f"[collect] multi-optimal nodes: {result.metadata.multi_optimal_distribution()}")
-    return result.samples
+    if cache is not None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(all_samples, cache)
+        print(f"[collect] samples cached to {cache}", flush=True)
+    return all_samples
 
 
 def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dict) -> None:
@@ -226,6 +321,12 @@ def main() -> None:
     parser.add_argument("--eval-family", type=parse_family, default=EVAL_FAMILY, metavar="RxCxDENSITY")
     parser.add_argument("--collect-time-limit", type=float, default=60.0, help="per-episode collection budget")
     parser.add_argument(
+        "--collect-workers",
+        type=int,
+        default=1,
+        help="parallel collection episode workers (each runs its own SCIP; 1 = sequential)",
+    )
+    parser.add_argument(
         "--retrain",
         action="store_true",
         help="re-collect and re-train even if a checkpoint exists (default: reuse it)",
@@ -236,7 +337,13 @@ def main() -> None:
     write_eval_instances(results_dir / "instances" / "setcover_pilot", args.eval_family)
     checkpoint = results_dir / "gasse.pt"
     if args.retrain or not checkpoint.exists():
-        samples = collect_expert_data(args.episodes, args.train_family, time_limit=args.collect_time_limit)
+        samples = collect_expert_data(
+            args.episodes,
+            args.train_family,
+            time_limit=args.collect_time_limit,
+            cache=results_dir / "expert_samples.pt",
+            n_workers=args.collect_workers,
+        )
         if not samples:
             raise SystemExit("no expert samples collected — increase --episodes")
         train_policy(samples, args.epochs, checkpoint, args.train_family)
