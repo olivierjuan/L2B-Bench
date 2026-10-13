@@ -22,7 +22,11 @@
 set -euo pipefail
 
 REPO=/fsmedium/work/rd/turing/L2B-Bench
-RESULTS=$REPO/results/gasse_gpu_v2
+# sbatch --export=METHOD=lookback,RESULTS=$REPO/results/lookback_gpu_v1
+# drives the Lookback port through the same campaign (METHOD_SPECS in
+# scripts/pilot_gasse.py); the default is the Gasse campaign.
+METHOD=${METHOD:-gasse}
+RESULTS=${RESULTS:-$REPO/results/gasse_gpu_v2}
 EPISODES=100
 EPOCHS=100
 # The paper trains AND tests on the same set-cover family — it never claims
@@ -48,6 +52,7 @@ export OMP_NUM_THREADS=1      # parallelism is at the episode level, one thread 
 
 # The CUDA venv (torch cu129); falls back to CPU code paths if no GPU.
 $REPO/.venv-gpu/bin/python scripts/pilot_gasse.py \
+    --method "$METHOD" \
     --episodes "$EPISODES" \
     --epochs "$EPOCHS" \
     --train-family "$TRAIN_FAMILY" \

@@ -1,13 +1,14 @@
-"""The Gasse 2019 pilot campaign: collect → train → evaluate, end to end.
+"""The pilot campaign: collect → train → evaluate, end to end.
 
 A small, fully reproducible demonstration that the benchmark loop works on
 the harness — not a scientific result. Everything runs on CPU in minutes:
 
 1. **Instances** — a handful of held-out set covers (the paper's synthetic
    family, scaled down) written as a pilot strate;
-2. **Collect** — explore-then-strong-branch expert trajectories on training
-   set covers (a different generator seed than the strate's);
-3. **Train** — the paper's GCNN under the official imitation-learning loop;
+2. **Collect** — expert trajectories on training set covers (a different
+   generator seed than the strate's), under the selected method's protocol;
+3. **Train** — the GCNN under the official imitation-learning loop (with
+   the Lookback loss for the lookback method);
 4. **Evaluate** — the trained policy against the classical baselines
    through the runner: the same config-driven grid, records, and
    publication guard every method of the benchmark will use.
@@ -18,7 +19,7 @@ method-porting recipe, and to leave a template for the real campaigns.
 
 Usage::
 
-    uv run python scripts/pilot_gasse.py [--episodes 20] [--epochs 20]
+    uv run python scripts/pilot_gasse.py [--method gasse] [--episodes 20] [--epochs 20]
 
 Results land in ``results/pilot_gasse/`` (gitignored): the instance strate,
 the checkpoint, the run records, and a summary JSON.
@@ -34,7 +35,7 @@ from gyozas.metrics import paired_per_instance_ratios, sgm_of_ratios
 from gyozas.runner import Cell, ExperimentConfig, Method, Runner
 
 from l2b_bench.methods.baselines import BASELINE_METHODS
-from l2b_bench.methods.gasse.collect import collect
+from l2b_bench.methods.gasse.model import GNNPolicy
 from l2b_bench.methods.gasse.policy import gasse_method
 from l2b_bench.methods.gasse.train import (
     collate,
@@ -44,7 +45,24 @@ from l2b_bench.methods.gasse.train import (
     save_checkpoint,
     to_device,
 )
-from l2b_bench.methods.gasse.model import GNNPolicy
+from l2b_bench.methods.lookback.collect import collect_episode as lookback_collect_episode
+from l2b_bench.methods.lookback.policy import lookback_method
+from l2b_bench.methods.lookback.train import (
+    LookbackBatch,
+    collate_pairs,
+    lb_to_device,
+    process_lookback,
+)
+
+# The ported methods this pilot can drive, with their protocol knobs.
+METHOD_SPECS = {
+    "gasse": {"prob": 0.5, "method": gasse_method, "cache_name": "expert_samples.pt"},
+    "lookback": {
+        "prob": 0.05,  # the official node_record_prob
+        "method": lookback_method,
+        "cache_name": "expert_samples.pt",
+    },
+}
 
 def parse_family(text: str) -> dict:
     """``"500x1000x0.05"`` → ``dict(n_rows=500, n_cols=1000, density=0.05)``."""
@@ -95,7 +113,7 @@ def _collect_one_episode(job):
 
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-    path, seed, expert_probability, time_limit = job
+    path, seed, kind, probability, time_limit = job
     from gyozas.dynamics.branching import BranchingDynamics, ExtraBranchingActions
     from gyozas.environment import Environment
     from gyozas.informations.solve_status import SolveStatus
@@ -122,7 +140,10 @@ def _collect_one_episode(job):
         env.seed(triplet.solver)
         triplet.seed_python()
         rng = np.random.default_rng(triplet.augmentation)
-        samples, n_nodes, status = collect_episode(env, rng, expert_probability)
+        if kind == "lookback":
+            samples, n_nodes, status = lookback_collect_episode(env, rng, probability)
+        else:
+            samples, n_nodes, status = collect_episode(env, rng, probability)
         return samples, n_nodes, status
     finally:
         env.close()
@@ -134,6 +155,7 @@ def collect_expert_data(
     time_limit: float = 60.0,
     cache: Path | None = None,
     n_workers: int = 1,
+    kind: str = "gasse",
 ) -> list:
     """Explore-then-strong-branch trajectories on the training family.
 
@@ -165,7 +187,7 @@ def collect_expert_data(
         paths.append(path)
     print(f"[collect] {n_episodes} training instances in {instance_dir}", flush=True)
 
-    jobs = [(path, i, 0.5, time_limit) for i, path in enumerate(paths)]
+    jobs = [(path, i, kind, METHOD_SPECS[kind]["prob"], time_limit) for i, path in enumerate(paths)]
     all_samples: list = []
     statuses: list[str] = []
     n_nodes_total = 0
@@ -201,29 +223,58 @@ def collect_expert_data(
     return all_samples
 
 
-def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dict) -> None:
-    """The official imitation-learning loop: pretrain, then epochs of Adam."""
+def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dict, kind: str = "gasse") -> None:
+    """The official imitation-learning loop: pretrain, then epochs of Adam.
+
+    The loss is the selected method's: Gasse's candidate cross-entropy, or
+    Lookback's (one-hot target + the PAT distillation term, the paper's
+    set-cover hyperparameters).
+    """
     import torch
 
     model = GNNPolicy()
     shuffle = np.random.default_rng(0)
 
-    def batches(device):
-        order = shuffle.permutation(len(samples))
-        return [
-            to_device(collate([samples[i] for i in order[k : k + BATCH_SIZE]]), device)
-            for k in range(0, len(order), BATCH_SIZE)
-        ]
+    if kind == "lookback":
+        from l2b_bench.methods.lookback.collect import pair_parent_children
+
+        pairs = pair_parent_children(samples)
+        print(f"[train] {len(pairs)} parent-child pairs out of {len(samples)} samples")
+
+        def batches(device):
+            order = shuffle.permutation(len(samples))
+            return [
+                lb_to_device(
+                    collate_pairs(
+                        [samples[i] for i in order[k : k + BATCH_SIZE]],
+                        {i - k: pairs[i] - k for i in order[k : k + BATCH_SIZE] if i in pairs and pairs[i] - k >= 0},
+                    ),
+                    device,
+                )
+                for k in range(0, len(order), BATCH_SIZE)
+            ]
+
+    else:
+
+        def batches(device):
+            order = shuffle.permutation(len(samples))
+            return [
+                to_device(collate([samples[i] for i in order[k : k + BATCH_SIZE]]), device)
+                for k in range(0, len(order), BATCH_SIZE)
+            ]
 
     device = get_device()
     print(f"[train] device: {device}")
     model = model.to(device)
-    n_layers = pretrain(model, batches(device))
+    n_layers = pretrain(model, [lb.batch if isinstance(lb, LookbackBatch) else lb for lb in batches(device)])
     print(f"[train] froze {n_layers} PreNorm layers")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     for epoch in range(1, epochs + 1):
-        stats = process(model, batches(device), optimizer=optimizer)
+        if kind == "lookback":
+            stats = process_lookback(model, batches(device), optimizer=optimizer)
+        else:
+            stats = process(model, batches(device), optimizer=optimizer)
         kacc = " ".join(f"acc@{k}={a:.2f}" for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True))
         print(f"[train] epoch {epoch:3d}  loss={stats['loss']:.4f}  {kacc}")
 
@@ -236,10 +287,10 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
     print(f"[train] checkpoint saved to {checkpoint}")
 
 
-def run_benchmark(checkpoint: Path, results_dir: Path) -> dict:
+def run_benchmark(checkpoint: Path, results_dir: Path, kind: str = "gasse") -> dict:
     """The trained policy vs the classical baselines on the pilot grid."""
     methods: dict[str, Method] = dict(BASELINE_METHODS)
-    methods["gasse"] = gasse_method(checkpoint)
+    methods[kind] = METHOD_SPECS[kind]["method"](checkpoint)
     strate_root = results_dir / "instances" / "setcover_pilot"
     config = ExperimentConfig(
         cells=[
@@ -309,6 +360,7 @@ def summarize(runner: Runner, config: ExperimentConfig, results_dir: Path) -> di
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--method", choices=sorted(METHOD_SPECS), default="gasse", help="which ported method to drive (default gasse)")
     parser.add_argument("--episodes", type=int, default=20, help="collection episodes (default 20)")
     parser.add_argument("--epochs", type=int, default=20, help="training epochs (default 20)")
     parser.add_argument(
@@ -335,21 +387,22 @@ def main() -> None:
 
     results_dir: Path = args.results_dir
     write_eval_instances(results_dir / "instances" / "setcover_pilot", args.eval_family)
-    checkpoint = results_dir / "gasse.pt"
+    checkpoint = results_dir / f"{args.method}.pt"
     if args.retrain or not checkpoint.exists():
         samples = collect_expert_data(
             args.episodes,
             args.train_family,
             time_limit=args.collect_time_limit,
-            cache=results_dir / "expert_samples.pt",
+            cache=results_dir / METHOD_SPECS[args.method]["cache_name"],
             n_workers=args.collect_workers,
+            kind=args.method,
         )
         if not samples:
             raise SystemExit("no expert samples collected — increase --episodes")
-        train_policy(samples, args.epochs, checkpoint, args.train_family)
+        train_policy(samples, args.epochs, checkpoint, args.train_family, kind=args.method)
     else:
         print(f"[train] reusing checkpoint {checkpoint}")
-    run_benchmark(checkpoint, results_dir)
+    run_benchmark(checkpoint, results_dir, kind=args.method)
 
 
 if __name__ == "__main__":
