@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Benchmark instance files: large, rebuildable from their sources — only the
+# signed manifests are tracked (they are the protocol freeze unit, R3.3).
+data/**/*.mps
+data/**/*.mps.gz
+data/**/*.lp
+
+# Run records: outputs, archived per campaign, never in git.
+results/

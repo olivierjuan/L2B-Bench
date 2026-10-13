@@ -1,0 +1,196 @@
+{
+  "cells": [
+    {
+      "method": "default",
+      "strate": "miplib_s",
+      "split": "train",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "default",
+      "strate": "miplib_s",
+      "split": "test",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "default",
+      "strate": "milp_l",
+      "split": "easy",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "default",
+      "strate": "milp_l",
+      "split": "hard",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "pscost",
+      "strate": "miplib_s",
+      "split": "train",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "pscost",
+      "strate": "miplib_s",
+      "split": "test",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "pscost",
+      "strate": "milp_l",
+      "split": "easy",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "pscost",
+      "strate": "milp_l",
+      "split": "hard",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "relpscost",
+      "strate": "miplib_s",
+      "split": "train",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "relpscost",
+      "strate": "miplib_s",
+      "split": "test",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "relpscost",
+      "strate": "milp_l",
+      "split": "easy",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    },
+    {
+      "method": "relpscost",
+      "strate": "milp_l",
+      "split": "hard",
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "profile": "default",
+      "budget": {
+        "limits/time": 3600.0
+      }
+    }
+  ]
+}

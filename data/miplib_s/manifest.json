@@ -1,0 +1,204 @@
+{
+  "counts": {
+    "miplib_s/test": 8,
+    "miplib_s/train": 19
+  },
+  "entries": {
+    "miplib_s/test/map18": {
+      "name": "map18",
+      "sha256": "19e4445f65dbd55dea27ca925209d9ee9e5c768893bc5aa2242be9a7b4d62d7f",
+      "size": 4059093,
+      "split": "test",
+      "strate": "miplib_s"
+    },
+    "miplib_s/test/mine-166-5": {
+      "name": "mine-166-5",
+      "sha256": "37f060299f78173f34efc2f895692f7d544b2e82475330af6d09e9b3d0691237",
+      "size": 130291,
+      "split": "test",
+      "strate": "miplib_s"
+    },
+    "miplib_s/test/neos11": {
+      "name": "neos11",
+      "sha256": "f625ca0480dd906f1f5af63588fb075fb86056ecd702dd48c5bcf1707a79cfb4",
+      "size": 315604,
+      "split": "test",
+      "strate": "miplib_s"
+    },
+    "miplib_s/test/neos18": {
+      "name": "neos18",
+      "sha256": "ba727d075a82bc390555756f2363c87c3cd90016fb7cce592317a1678953d56f",
+      "size": 166991,
+      "split": "test",
+      "strate": "miplib_s"
+    },
+    "miplib_s/test/ns1830653": {
+      "name": "ns1830653",
+      "sha256": "a4e3c130f7ff6ebab4d6781a7e95fadc6c4c043e3e65d95b90f3e2e5e46f1017",
+      "size": 339657,
+      "split": "test",
+      "strate": "miplib_s"
+    },
+    "miplib_s/test/nu25-pr12": {
+      "name": "nu25-pr12",
+      "sha256": "c05644f79dc7a3b2475a5ebe9046a3954f902f774a9555467567eb72a22b917b",
+      "size": 810164,
+      "split": "test",
+      "strate": "miplib_s"
+    },
+    "miplib_s/test/rail507": {
+      "name": "rail507",
+      "sha256": "09eb263ad62b9e73f02bed84dce9307622be2ba67f8b0e325af1b8e39cce3770",
+      "size": 1857311,
+      "split": "test",
+      "strate": "miplib_s"
+    },
+    "miplib_s/test/seymour1": {
+      "name": "seymour1",
+      "sha256": "d5150ce3c86eb3e89cb3689261cc7c26459d735991acd0e0b362b711584b7548",
+      "size": 1355208,
+      "split": "test",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/air04": {
+      "name": "air04",
+      "sha256": "364f229be10401a476c06c3b42ff91aff3996d4c8c55c5ba2c6d9f8d0b02ad01",
+      "size": 2939613,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/air05": {
+      "name": "air05",
+      "sha256": "1ca185a7d8d6eaa48d959a8b4c00e3b0d6faf0f9e4ec4411c3228224dca074e3",
+      "size": 2151863,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/dcmulti": {
+      "name": "dcmulti",
+      "sha256": "a9552af8f0fd228851352ba60b62a64639f8ffd4a01f217afc095eaac4c29a75",
+      "size": 77971,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/eil33-2": {
+      "name": "eil33-2",
+      "sha256": "2d349f8ba12aaf170c9f8bf85327d6592cc0f4d89d300dfb77197acd34a7ffb1",
+      "size": 143418,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/istanbul-no-cutoff": {
+      "name": "istanbul-no-cutoff",
+      "sha256": "2b9171a1b1e4236c33ea444b24a98892fb0228ac9309495b4fac280e2ad5653a",
+      "size": 398498,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/l152lav": {
+      "name": "l152lav",
+      "sha256": "c797f70b0b84f34653686c9914a7842872a9c39330a9ec127d1db6b367241034",
+      "size": 453987,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/lseu": {
+      "name": "lseu",
+      "sha256": "00416576ed4adac15b62b1982cb7be9d7dcb2d6505067dd8396183ff1eac3dab",
+      "size": 17486,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/misc03": {
+      "name": "misc03",
+      "sha256": "caba4f42b1827e41cdd62c6548435cc786b9f9092f984f170cab8df939a84acb",
+      "size": 73967,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/neos-476283": {
+      "name": "neos-476283",
+      "sha256": "2f90490b487fc8c4df5ef002f27429ea765b6ce190321a355ad1574cbe1e9566",
+      "size": 11561339,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/neos20": {
+      "name": "neos20",
+      "sha256": "1018bb7c4c89c2e1482a2dd1b2d6cf3bcdd11c1fa7a5344739d5813f5a4a92e2",
+      "size": 47722,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/neos21": {
+      "name": "neos21",
+      "sha256": "47f6fa1c6bfceca4ae2c264b26519526ef38b82736adc7ea2ee53f1119f3ea7f",
+      "size": 41027,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/neos648910": {
+      "name": "neos648910",
+      "sha256": "1172c4fe86fab9ef53b4bf81dfd173ef9f65cdc4151886835ec06d917d9323e6",
+      "size": 28950,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/pp08aCUTS": {
+      "name": "pp08aCUTS",
+      "sha256": "66176a6da44a032d9040a7c206c87ed88e55eb2069531da3211eb99205f29790",
+      "size": 44047,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/rmatr100-p10": {
+      "name": "rmatr100-p10",
+      "sha256": "86e4b03e3db2298c29e3ce5863e76b319e95252da2a834d7441d9346dfa4a423",
+      "size": 153825,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/rmatr100-p5": {
+      "name": "rmatr100-p5",
+      "sha256": "f26d3dd6fdecd9794d9574fc7516f010e03a9815b52da5a36303170caff60c32",
+      "size": 180503,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/sp150x300d": {
+      "name": "sp150x300d",
+      "sha256": "47051527397e27d1a62d0462ded35042d5eb5f4c4a3b5e3257c82279b97f1e42",
+      "size": 8719,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/stein27": {
+      "name": "stein27",
+      "sha256": "b8889994eda0853d71bad6ba9bf45755d4e59f33a13a3f43008e1ba681738c5b",
+      "size": 19465,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/swath1": {
+      "name": "swath1",
+      "sha256": "f1856f2f878206ae523dcf95ad18b86b9b0e31c9e6310717d3864364eb790ea4",
+      "size": 183416,
+      "split": "train",
+      "strate": "miplib_s"
+    },
+    "miplib_s/train/vpm2": {
+      "name": "vpm2",
+      "sha256": "55ca0b6caff042c42c5269045177351db828f066a94876e5885f626d02d5ffbc",
+      "size": 53949,
+      "split": "train",
+      "strate": "miplib_s"
+    }
+  },
+  "hash": "4c516306e5edc9f211b074d8e95ce1814d22059ac955e837ee254d6160ffbd3e",
+  "provenance": {
+    "format": "mps.gz",
+    "paper": "Zarpellon, Jo, Lodi, Bengio \u2014 Parameterizing Branch-and-Bound Search Trees to Learn Branching Policies (AAAI 2021)",
+    "source": "branch-search-trees dataset, https://osf.io/uvg5f/",
+    "splits": "original train/test split of the dataset (19 train / 8 test); the 8 test instances are the evaluation set of the TreeGate model"
+  }
+}
