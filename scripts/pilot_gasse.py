@@ -54,6 +54,7 @@ from l2b_bench.methods.lookback.train import (
     process_lookback,
 )
 from l2b_bench.methods.retrobranching.policy import retrobranching_method
+from l2b_bench.methods.scavuzzo.policy import scavuzzo_method
 from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
 from l2b_bench.methods.tbrant.policy import tbrant_method
 from l2b_bench.methods.treegate.collect import (
@@ -98,6 +99,27 @@ METHOD_SPECS = {
         "prob": None,
         "method": retrobranching_method,
         "cache_name": None,
+    },
+    # Scavuzzo's three variants share one IL pretraining stage (collected
+    # exactly like gasse's data, expert_probability 0.05) and differ only in
+    # the REINFORCE credit assignment — see l2b_bench.methods.scavuzzo.
+    "scavuzzo-mdp": {
+        "prob": 0.05,
+        "method": lambda checkpoint: scavuzzo_method(checkpoint, "mdp"),
+        "cache_name": "expert_samples.pt",
+        "variant": "mdp",
+    },
+    "scavuzzo-tmdp-dfs": {
+        "prob": 0.05,
+        "method": lambda checkpoint: scavuzzo_method(checkpoint, "tmdp+DFS"),
+        "cache_name": "expert_samples.pt",
+        "variant": "tmdp+DFS",
+    },
+    "scavuzzo-tmdp-objlim": {
+        "prob": 0.05,
+        "method": lambda checkpoint: scavuzzo_method(checkpoint, "tmdp+ObjLim"),
+        "cache_name": "expert_samples.pt",
+        "variant": "tmdp+ObjLim",
     },
 }
 
@@ -308,6 +330,38 @@ def train_retrobranching(
         checkpoint,
         episodes=episodes,
         buffer_min_length=buffer_min_length or BUFFER_MIN_LENGTH,
+        time_limit=time_limit,
+        seed=0,
+    )
+
+
+def train_scavuzzo(
+    il_checkpoint: Path,
+    checkpoint: Path,
+    episodes: int,
+    train_family: dict,
+    variant: str,
+    time_limit: float = 60.0,
+) -> None:
+    """The RL stage: REINFORCE fine-tuning of the IL-pretrained GNNPolicy.
+
+    The IL stage is the pilot's own ``train_policy`` (gasse loss over the
+    prob-0.05 expert samples) — run by ``main`` before this. Each episode
+    solves a fresh instance drawn from the training family; the tmdp+ObjLim
+    variant additionally solves each instance to optimality first (the
+    objective limit needs it), so it costs roughly twice the solve time.
+    """
+    from gyozas.instances import SetCoverGenerator
+
+    from l2b_bench.methods.scavuzzo.train import train as train_rl
+
+    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    train_rl(
+        (next(generator) for _ in range(episodes)),
+        il_checkpoint,
+        checkpoint,
+        episodes=episodes,
+        variant=variant,
         time_limit=time_limit,
         seed=0,
     )
@@ -579,6 +633,32 @@ def main() -> None:
                 args.episodes,
                 checkpoint,
                 args.train_family,
+                time_limit=args.collect_time_limit,
+            )
+        elif args.method.startswith("scavuzzo"):
+            # Two stages: IL pretraining (the gasse loss over the shared
+            # prob-0.05 expert samples — all three variants pretrain alike),
+            # then the variant's REINFORCE fine-tuning. A restarted campaign
+            # reuses the IL checkpoint but always redoes the RL stage.
+            il_checkpoint = results_dir / "scavuzzo_il.pt"
+            if args.retrain or not il_checkpoint.exists():
+                samples = collect_expert_data(
+                    args.episodes,
+                    args.train_family,
+                    time_limit=args.collect_time_limit,
+                    cache=results_dir / METHOD_SPECS[args.method]["cache_name"],
+                    n_workers=args.collect_workers,
+                    kind=args.method,
+                )
+                if not samples:
+                    raise SystemExit("no expert samples collected — increase --episodes")
+                train_policy(samples, args.epochs, il_checkpoint, args.train_family, kind="gasse")
+            train_scavuzzo(
+                il_checkpoint,
+                checkpoint,
+                args.episodes,
+                args.train_family,
+                METHOD_SPECS[args.method]["variant"],
                 time_limit=args.collect_time_limit,
             )
         else:
