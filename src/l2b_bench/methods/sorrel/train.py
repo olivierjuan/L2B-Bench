@@ -40,7 +40,7 @@ parameterized.
 """
 
 import copy
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -179,10 +179,13 @@ class TD3BC:
         self.actor_optimizer.step()
         return float(loss.detach())
 
-    def learn(self, batches: list[SorrelBatch]) -> dict[str, float]:
+    def learn(self, batches: Iterable[SorrelBatch]) -> dict[str, float]:
+        """One pass over the batches (an iterable — the campaign epochs are
+        generated lazily so a whole epoch never sits on the GPU at once)."""
         critic_loss = 0.0
         actor_loss = 0.0
         n_actor = 0
+        n_batches = 0
         for batch in batches:
             critic_loss += self.update_critic(batch)
             self.train_steps += 1
@@ -190,8 +193,9 @@ class TD3BC:
                 actor_loss += self.update_actor(batch)
                 n_actor += 1
                 self.soft_update()
+            n_batches += 1
         return {
-            "critic_loss": critic_loss / max(1, len(batches)),
+            "critic_loss": critic_loss / max(1, n_batches),
             "actor_loss": actor_loss / max(1, n_actor),
         }
 
@@ -222,11 +226,13 @@ def train_td3bc(
     log(f"[td3bc] froze {n_layers} PreNorm layers (actor only), r_max={model.r_max:.4g}")
     for epoch in range(1, epochs + 1):
         # The official draws epoch_size*batch_size samples with replacement.
+        # The batches are generated lazily — a materialized epoch (625 batches
+        # of three 500x600 graph groups) exhausts the campaign card's 22 GiB.
         order = rng.integers(0, len(samples), size=epoch_size * batch_size)
-        batches = [
+        batches = (
             SorrelBatch([samples[i] for i in order[k : k + batch_size]]).to(model.device)
             for k in range(0, len(order), batch_size)
-        ]
+        )
         stats = model.learn(batches)
         log(
             f"[td3bc] epoch {epoch:4d}  critic={stats['critic_loss']:.4f}  "
