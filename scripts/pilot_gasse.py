@@ -58,15 +58,25 @@ from l2b_bench.methods.tbrant.policy import tbrant_method
 
 # The ported methods this pilot can drive, with their protocol knobs.
 METHOD_SPECS = {
-    "gasse": {"prob": 0.5, "method": gasse_method, "cache_name": "expert_samples.pt"},
+    "gasse": {
+        "prob": 0.5,
+        "method": gasse_method,
+        "cache_name": "expert_samples.pt",
+    },
     "lookback": {
         "prob": 0.05,  # the official node_record_prob
         "method": lookback_method,
         "cache_name": "expert_samples.pt",
     },
     # T-BranT sees a different observation than the bipartite-graph methods,
-    # so its samples cannot share their cache.
-    "tbrant": {"prob": None, "method": tbrant_method, "cache_name": "tbrant_samples.pt"},
+    # so its samples cannot share their cache. Batch size 20 is the official
+    # train_LTBranT.sh (the bipartite-graph methods use the pilot's 32).
+    "tbrant": {
+        "prob": None,
+        "method": tbrant_method,
+        "cache_name": "tbrant_samples.pt",
+        "batch_size": 20,
+    },
 }
 
 def parse_family(text: str) -> dict:
@@ -247,6 +257,8 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
     """
     import torch
 
+    batch_size = METHOD_SPECS[kind].get("batch_size", BATCH_SIZE)
+
     if kind == "tbrant":
         from l2b_bench.methods.tbrant.model import BranchFormer
         from l2b_bench.methods.tbrant.train import (
@@ -265,8 +277,8 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         def batches(device):
             order = shuffle.permutation(len(samples))
             return [
-                stats_to_device(collate_stats([samples[i] for i in order[k : k + BATCH_SIZE]]), device)
-                for k in range(0, len(order), BATCH_SIZE)
+                stats_to_device(collate_stats([samples[i] for i in order[k : k + batch_size]]), device)
+                for k in range(0, len(order), batch_size)
             ]
 
         device = get_device()
@@ -307,10 +319,10 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
             order = shuffle.permutation(len(samples))
             return [
                 lb_to_device(
-                    collate_pairs(samples, list(order[k : k + BATCH_SIZE]), pairs),
+                    collate_pairs(samples, list(order[k : k + batch_size]), pairs),
                     device,
                 )
-                for k in range(0, len(order), BATCH_SIZE)
+                for k in range(0, len(order), batch_size)
             ]
 
     else:
@@ -318,8 +330,8 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         def batches(device):
             order = shuffle.permutation(len(samples))
             return [
-                to_device(collate([samples[i] for i in order[k : k + BATCH_SIZE]]), device)
-                for k in range(0, len(order), BATCH_SIZE)
+                to_device(collate([samples[i] for i in order[k : k + batch_size]]), device)
+                for k in range(0, len(order), batch_size)
             ]
 
     device = get_device()
