@@ -53,6 +53,12 @@ from l2b_bench.methods.lookback.train import (
     lb_to_device,
     process_lookback,
 )
+from l2b_bench.methods.mamba.collect import (
+    MAMBA_K,
+    MAMBA_S,
+    collect_episode as mamba_collect_episode,
+)
+from l2b_bench.methods.mamba.policy import mamba_method
 from l2b_bench.methods.retrobranching.policy import retrobranching_method
 from l2b_bench.methods.scavuzzo.policy import scavuzzo_method
 from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
@@ -92,6 +98,14 @@ METHOD_SPECS = {
         "prob": None,
         "method": treegate_method,
         "cache_name": "treegate_samples.pt",
+    },
+    # Mamba collects like TreeGate (the same (s, k) cell) but keeps each
+    # episode's samples grouped — the decision order is the training signal
+    # of its path model, so the cache holds trajectories, not flat samples.
+    "mamba": {
+        "prob": None,
+        "method": mamba_method,
+        "cache_name": "mamba_trajectories.pt",
     },
     # RetroBranching is the benchmark's first RL method: no expert to collect
     # from, the agent itself explores (episodes solve fresh training
@@ -192,7 +206,7 @@ def _collect_one_episode(job):
 
     from l2b_bench.methods.gasse.collect import GASSE_SCIP_PARAMS, collect_episode
 
-    if kind in ("tbrant", "treegate"):
+    if kind in ("tbrant", "treegate", "mamba"):
         # Default SCIP: the solver-stats protocols keep heuristics on (the
         # official 'sandbox' deviation is documented in each collect.py).
         scip_params = {}
@@ -200,13 +214,22 @@ def _collect_one_episode(job):
         scip_params = dict(GASSE_SCIP_PARAMS)
     scip_params["limits/time"] = time_limit
     scip_params["display/verblevel"] = 0
-    observation = BranchingStateObservation() if kind in ("tbrant", "treegate") else NodeBipartite()
+    observation = (
+        BranchingStateObservation() if kind in ("tbrant", "treegate", "mamba") else NodeBipartite()
+    )
     dynamics = BranchingDynamics(with_extra_actions=[ExtraBranchingActions.SKIP])
     if kind == "treegate":
         # The (s, k) augmentation cell: the dynamics takes the k random-explorer
         # decisions itself and seeds the variable permutation.
         dynamics = BranchingDynamics(
             augmentation=ZarpellonAugmentation(seed=TREEGATE_S, k=TREEGATE_K),
+            with_extra_actions=[ExtraBranchingActions.SKIP],
+        )
+    elif kind == "mamba":
+        # The same (s, k) shape as treegate, on mamba's own cell (the same
+        # s = 0, k = 10 defaults — see methods/mamba/collect.py).
+        dynamics = BranchingDynamics(
+            augmentation=ZarpellonAugmentation(seed=MAMBA_S, k=MAMBA_K),
             with_extra_actions=[ExtraBranchingActions.SKIP],
         )
     env = Environment(
@@ -222,13 +245,16 @@ def _collect_one_episode(job):
         triplet = SeedTriplet.from_base_seed(seed)
         env.seed(triplet.solver)
         triplet.seed_python()
-        if kind in ("tbrant", "treegate"):
-            # Both solver-stats methods share the same collection shape: the
-            # relpscost expert at every exposed decision (for treegate, after
-            # the dynamics' k explorer decisions).
-            samples, n_nodes, status = (
-                treegate_collect_episode(env) if kind == "treegate" else tbrant_collect_episode(env)
-            )
+        if kind in ("tbrant", "treegate", "mamba"):
+            # The solver-stats methods share the same collection shape: the
+            # relpscost expert at every exposed decision (for treegate and
+            # mamba, after the dynamics' k explorer decisions).
+            if kind == "treegate":
+                samples, n_nodes, status = treegate_collect_episode(env)
+            elif kind == "mamba":
+                samples, n_nodes, status = mamba_collect_episode(env)
+            else:
+                samples, n_nodes, status = tbrant_collect_episode(env)
         else:
             rng = np.random.default_rng(triplet.augmentation)
             if kind == "lookback":
@@ -260,7 +286,7 @@ def collect_expert_data(
 
     if cache is not None and cache.exists():
         samples = torch.load(cache, weights_only=False)
-        print(f"[collect] reusing {len(samples)} cached expert samples from {cache}", flush=True)
+        print(f"[collect] reusing the cached collection from {cache} ({len(samples)} entries)", flush=True)
         return samples
 
     from gyozas.instances import SetCoverGenerator
@@ -279,13 +305,23 @@ def collect_expert_data(
     print(f"[collect] {n_episodes} training instances in {instance_dir}", flush=True)
 
     jobs = [(path, i, kind, METHOD_SPECS[kind]["prob"], time_limit) for i, path in enumerate(paths)]
+    # Mamba trains on trajectories: each episode's samples stay grouped (the
+    # decision order is its path model's input); every other method flattens.
+    keep_trajectories = kind == "mamba"
     all_samples: list = []
     statuses: list[str] = []
     n_nodes_total = 0
+
+    def _absorb(samples) -> None:
+        if keep_trajectories:
+            all_samples.append(samples)
+        else:
+            all_samples.extend(samples)
+
     if n_workers <= 1:
         results = map(_collect_one_episode, jobs)
         for done, (samples, n_nodes, status) in enumerate(results, 1):
-            all_samples.extend(samples)
+            _absorb(samples)
             statuses.append(status)
             n_nodes_total += n_nodes
             print(f"[collect] episode {done}/{n_episodes}: {status}, {n_nodes} nodes", flush=True)
@@ -296,15 +332,18 @@ def collect_expert_data(
             futures = {pool.submit(_collect_one_episode, job): job for job in jobs}
             for done, future in enumerate(as_completed(futures), 1):
                 samples, n_nodes, status = future.result()
-                all_samples.extend(samples)
+                _absorb(samples)
                 statuses.append(status)
                 n_nodes_total += n_nodes
                 print(f"[collect] episode {done}/{n_episodes}: {status}, {n_nodes} nodes", flush=True)
 
     solved = sum(1 for s in statuses if s == "optimal")
+    n_decisions = sum(len(episode) for episode in all_samples) if keep_trajectories else len(all_samples)
     print(
         f"[collect] {n_episodes} episodes ({solved} optimal), "
-        f"{n_nodes_total} nodes, {len(all_samples)} expert samples",
+        f"{n_nodes_total} nodes, {len(all_samples)} "
+        f"{'trajectories' if keep_trajectories else 'expert samples'} "
+        f"({n_decisions} decisions)",
         flush=True,
     )
     if cache is not None:
@@ -402,6 +441,17 @@ def train_tgppo(
         time_limit=time_limit,
         seed=0,
     )
+
+
+def train_mamba(trajectories: list, epochs: int, checkpoint: Path, train_family: dict) -> None:
+    """The official two-stage IL: contrastive pretraining, then the Mamba.
+
+    ``epochs`` drives both stages (the paper runs 50 each); the trajectories
+    are the collected relpscost-expert episodes, kept in decision order.
+    """
+    from l2b_bench.methods.mamba.train import train
+
+    train(trajectories, checkpoint, epochs=epochs, clip_epochs=epochs)
 
 
 def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dict, kind: str = "gasse") -> None:
@@ -681,6 +731,22 @@ def main() -> None:
                 args.train_family,
                 time_limit=args.collect_time_limit,
             )
+        elif args.method == "mamba":
+            # Two-stage IL over relpscost-expert trajectories: the collected
+            # episodes stay grouped (the decision order is the path model's
+            # input), and --epochs drives both the contrastive and the
+            # sequence stage.
+            trajectories = collect_expert_data(
+                args.episodes,
+                args.train_family,
+                time_limit=args.collect_time_limit,
+                cache=results_dir / METHOD_SPECS[args.method]["cache_name"],
+                n_workers=args.collect_workers,
+                kind=args.method,
+            )
+            if not trajectories or not any(trajectories):
+                raise SystemExit("no expert trajectories collected — increase --episodes")
+            train_mamba(trajectories, args.epochs, checkpoint, args.train_family)
         elif args.method.startswith("scavuzzo"):
             # Two stages: IL pretraining (the gasse loss over the shared
             # prob-0.05 expert samples — all three variants pretrain alike),
