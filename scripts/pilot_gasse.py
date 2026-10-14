@@ -35,6 +35,7 @@ from gyozas.metrics import paired_per_instance_ratios, sgm_of_ratios
 from gyozas.runner import Cell, ExperimentConfig, Method, Runner
 
 from l2b_bench.methods.baselines import BASELINE_METHODS
+from l2b_bench.methods.cambranch.policy import cambranch_method
 from l2b_bench.methods.gasse.model import GNNPolicy
 from l2b_bench.methods.gasse.policy import gasse_method
 from l2b_bench.methods.gasse.train import (
@@ -162,6 +163,15 @@ METHOD_SPECS = {
         "prob": None,
         "method": bbmdp_method,
         "cache_name": None,
+    },
+    # CAMBranch collects exactly like gasse (the paper's SCIP 6.0.1
+    # root-cuts-only, no-restart setting coincides with Gasse's collection
+    # parameters) and diverges at training: 10% of the samples plus the free
+    # variable-shifted AMILPs, under the joint contrastive loss.
+    "cambranch": {
+        "prob": 0.5,
+        "method": cambranch_method,
+        "cache_name": "expert_samples.pt",
     },
 }
 
@@ -671,6 +681,24 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
             extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
         )
         print(f"[train] checkpoint saved to {checkpoint}")
+        return
+
+    if kind == "cambranch":
+        from l2b_bench.methods.cambranch import train as train_cambranch
+        from l2b_bench.methods.cambranch.train import PAIRS_PER_BATCH, subsample_budget
+
+        # The paper's data budget: 10% of the strong-branching samples — the
+        # 90k AMILPs are free by feature transformation (Thm 3.1).
+        kept = subsample_budget(samples)
+        print(f"[train] cambranch: {len(kept)} of {len(samples)} samples (the paper's 10% budget)")
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        train_cambranch(
+            kept,
+            checkpoint,
+            epochs=epochs,
+            pairs_per_batch=PAIRS_PER_BATCH,
+            extra={"n_samples": len(kept), "epochs": epochs, "train_family": train_family},
+        )
         return
 
     model = GNNPolicy()
