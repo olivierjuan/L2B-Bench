@@ -265,9 +265,7 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         def batches(device):
             order = shuffle.permutation(len(samples))
             return [
-                stats_to_device(
-                    collate_stats([samples[i] for i in order[k : k + BATCH_SIZE]])
-                )
+                stats_to_device(collate_stats([samples[i] for i in order[k : k + BATCH_SIZE]]), device)
                 for k in range(0, len(order), BATCH_SIZE)
             ]
 
