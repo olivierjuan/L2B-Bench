@@ -55,6 +55,12 @@ from l2b_bench.methods.lookback.train import (
 )
 from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
 from l2b_bench.methods.tbrant.policy import tbrant_method
+from l2b_bench.methods.treegate.collect import (
+    TREEGATE_K,
+    TREEGATE_S,
+    collect_episode as treegate_collect_episode,
+)
+from l2b_bench.methods.treegate.policy import treegate_method
 
 # The ported methods this pilot can drive, with their protocol knobs.
 METHOD_SPECS = {
@@ -76,6 +82,13 @@ METHOD_SPECS = {
         "method": tbrant_method,
         "cache_name": "tbrant_samples.pt",
         "batch_size": 20,
+    },
+    # TreeGate shares T-BranT's observation (Zarpellon's original triple) but
+    # collects under the (s, k) augmentation — its own cache again.
+    "treegate": {
+        "prob": None,
+        "method": treegate_method,
+        "cache_name": "treegate_samples.pt",
     },
 }
 
@@ -129,6 +142,7 @@ def _collect_one_episode(job):
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
     path, seed, kind, probability, time_limit = job
+    from gyozas.augmentation import ZarpellonAugmentation
     from gyozas.dynamics.branching import BranchingDynamics, ExtraBranchingActions
     from gyozas.environment import Environment
     from gyozas.informations.solve_status import SolveStatus
@@ -138,15 +152,23 @@ def _collect_one_episode(job):
 
     from l2b_bench.methods.gasse.collect import GASSE_SCIP_PARAMS, collect_episode
 
-    if kind == "tbrant":
-        # Default SCIP: the tbrant protocol keeps heuristics on (the official
-        # 'sandbox' deviation is documented in tbrant/collect.py).
+    if kind in ("tbrant", "treegate"):
+        # Default SCIP: the solver-stats protocols keep heuristics on (the
+        # official 'sandbox' deviation is documented in each collect.py).
         scip_params = {}
     else:
         scip_params = dict(GASSE_SCIP_PARAMS)
     scip_params["limits/time"] = time_limit
     scip_params["display/verblevel"] = 0
-    observation = NodeBipartite() if kind != "tbrant" else BranchingStateObservation()
+    observation = BranchingStateObservation() if kind in ("tbrant", "treegate") else NodeBipartite()
+    dynamics = BranchingDynamics(with_extra_actions=[ExtraBranchingActions.SKIP])
+    if kind == "treegate":
+        # The (s, k) augmentation cell: the dynamics takes the k random-explorer
+        # decisions itself and seeds the variable permutation.
+        dynamics = BranchingDynamics(
+            augmentation=ZarpellonAugmentation(seed=TREEGATE_S, k=TREEGATE_K),
+            with_extra_actions=[ExtraBranchingActions.SKIP],
+        )
     env = Environment(
         instance_generator=FileGenerator(
             directory=path.parent, pattern=path.name, sampling_mode="replace", rng=np.random.default_rng(0)
@@ -154,14 +176,19 @@ def _collect_one_episode(job):
         observation_function=observation,
         information_function=SolveStatus(),
         scip_params=scip_params,
-        dynamics=BranchingDynamics(with_extra_actions=[ExtraBranchingActions.SKIP]),
+        dynamics=dynamics,
     )
     try:
         triplet = SeedTriplet.from_base_seed(seed)
         env.seed(triplet.solver)
         triplet.seed_python()
-        if kind == "tbrant":
-            samples, n_nodes, status = tbrant_collect_episode(env)
+        if kind in ("tbrant", "treegate"):
+            # Both solver-stats methods share the same collection shape: the
+            # relpscost expert at every exposed decision (for treegate, after
+            # the dynamics' k explorer decisions).
+            samples, n_nodes, status = (
+                treegate_collect_episode(env) if kind == "treegate" else tbrant_collect_episode(env)
+            )
         else:
             rng = np.random.default_rng(triplet.augmentation)
             if kind == "lookback":
@@ -258,6 +285,52 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
     import torch
 
     batch_size = METHOD_SPECS[kind].get("batch_size", BATCH_SIZE)
+
+    if kind == "treegate":
+        from l2b_bench.methods.treegate.model import TreeGatePolicy
+        from l2b_bench.methods.treegate.train import (
+            LR,
+            LR_DECAY_EPOCHS,
+            LR_DECAY_FACTOR,
+            WEIGHT_DECAY,
+            process as process_treegate,
+            sample_to_device,
+            sample_to_tensors,
+            save_checkpoint as save_treegate_checkpoint,
+        )
+
+        model = TreeGatePolicy()
+        shuffle = np.random.default_rng(0)
+
+        def batches(device):
+            # One node at a time, like the official loop — a batch is a list
+            # of per-node tensor dicts.
+            order = shuffle.permutation(len(samples))
+            return [
+                [sample_to_device(sample_to_tensors(samples[i]), device) for i in order[k : k + batch_size]]
+                for k in range(0, len(order), batch_size)
+            ]
+
+        device = get_device()
+        print(f"[train] device: {device}")
+        model = model.to(device)
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, LR_DECAY_EPOCHS, LR_DECAY_FACTOR)
+        for epoch in range(1, epochs + 1):
+            stats = process_treegate(model, batches(device), optimizer=optimizer)
+            scheduler.step()
+            kacc = " ".join(f"acc@{k}={a:.2f}" for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True))
+            print(f"[train] epoch {epoch:3d}  loss={stats['loss']:.4f}  {kacc}")
+
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        save_treegate_checkpoint(
+            model.cpu(),
+            checkpoint,
+            extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
+        )
+        print(f"[train] checkpoint saved to {checkpoint}")
+        return
 
     if kind == "tbrant":
         from l2b_bench.methods.tbrant.model import BranchFormer
