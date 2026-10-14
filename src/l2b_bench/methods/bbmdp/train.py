@@ -264,7 +264,7 @@ def train(
     n_epochs: int = 62_500,
     time_limit: float = 300.0,
     seed: int = 42,
-) -> None:
+) -> int:
     """The official ``DQNTrainer.train`` loop: episodes until the gradient-step
     budget (``n_epochs``, 200k officially) or the episode budget is spent.
 
