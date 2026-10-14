@@ -53,6 +53,8 @@ from l2b_bench.methods.lookback.train import (
     lb_to_device,
     process_lookback,
 )
+from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
+from l2b_bench.methods.tbrant.policy import tbrant_method
 
 # The ported methods this pilot can drive, with their protocol knobs.
 METHOD_SPECS = {
@@ -62,6 +64,9 @@ METHOD_SPECS = {
         "method": lookback_method,
         "cache_name": "expert_samples.pt",
     },
+    # T-BranT sees a different observation than the bipartite-graph methods,
+    # so its samples cannot share their cache.
+    "tbrant": {"prob": None, "method": tbrant_method, "cache_name": "tbrant_samples.pt"},
 }
 
 def parse_family(text: str) -> dict:
@@ -118,19 +123,25 @@ def _collect_one_episode(job):
     from gyozas.environment import Environment
     from gyozas.informations.solve_status import SolveStatus
     from gyozas.instances.files import FileGenerator
-    from gyozas.observations import NodeBipartite
+    from gyozas.observations import BranchingStateObservation, NodeBipartite
     from gyozas.seeds import SeedTriplet
 
     from l2b_bench.methods.gasse.collect import GASSE_SCIP_PARAMS, collect_episode
 
-    scip_params = dict(GASSE_SCIP_PARAMS)
+    if kind == "tbrant":
+        # Default SCIP: the tbrant protocol keeps heuristics on (the official
+        # 'sandbox' deviation is documented in tbrant/collect.py).
+        scip_params = {}
+    else:
+        scip_params = dict(GASSE_SCIP_PARAMS)
     scip_params["limits/time"] = time_limit
     scip_params["display/verblevel"] = 0
+    observation = NodeBipartite() if kind != "tbrant" else BranchingStateObservation()
     env = Environment(
         instance_generator=FileGenerator(
             directory=path.parent, pattern=path.name, sampling_mode="replace", rng=np.random.default_rng(0)
         ),
-        observation_function=NodeBipartite(),
+        observation_function=observation,
         information_function=SolveStatus(),
         scip_params=scip_params,
         dynamics=BranchingDynamics(with_extra_actions=[ExtraBranchingActions.SKIP]),
@@ -139,11 +150,14 @@ def _collect_one_episode(job):
         triplet = SeedTriplet.from_base_seed(seed)
         env.seed(triplet.solver)
         triplet.seed_python()
-        rng = np.random.default_rng(triplet.augmentation)
-        if kind == "lookback":
-            samples, n_nodes, status = lookback_collect_episode(env, rng, probability)
+        if kind == "tbrant":
+            samples, n_nodes, status = tbrant_collect_episode(env)
         else:
-            samples, n_nodes, status = collect_episode(env, rng, probability)
+            rng = np.random.default_rng(triplet.augmentation)
+            if kind == "lookback":
+                samples, n_nodes, status = lookback_collect_episode(env, rng, probability)
+            else:
+                samples, n_nodes, status = collect_episode(env, rng, probability)
         return samples, n_nodes, status
     finally:
         env.close()
@@ -226,11 +240,57 @@ def collect_expert_data(
 def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dict, kind: str = "gasse") -> None:
     """The official imitation-learning loop: pretrain, then epochs of Adam.
 
-    The loss is the selected method's: Gasse's candidate cross-entropy, or
+    The loss is the selected method's: Gasse's candidate cross-entropy,
     Lookback's (one-hot target + the PAT distillation term, the paper's
-    set-cover hyperparameters).
+    set-cover hyperparameters), or T-BranT's (candidate cross-entropy over
+    the BranchFormer, AdamW + the Noam schedule).
     """
     import torch
+
+    if kind == "tbrant":
+        from l2b_bench.methods.tbrant.model import BranchFormer
+        from l2b_bench.methods.tbrant.train import (
+            LR,
+            WARMUP_EPOCHS,
+            NoamLR,
+            collate_stats,
+            process as process_tbrant,
+            save_checkpoint as save_tbrant_checkpoint,
+            to_device as stats_to_device,
+        )
+
+        model = BranchFormer()
+        shuffle = np.random.default_rng(0)
+
+        def batches(device):
+            order = shuffle.permutation(len(samples))
+            return [
+                stats_to_device(
+                    collate_stats([samples[i] for i in order[k : k + BATCH_SIZE]])
+                )
+                for k in range(0, len(order), BATCH_SIZE)
+            ]
+
+        device = get_device()
+        print(f"[train] device: {device}")
+        model = model.to(device)
+
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
+        scheduler = NoamLR(optimizer, WARMUP_EPOCHS)
+        for epoch in range(1, epochs + 1):
+            stats = process_tbrant(model, batches(device), optimizer=optimizer)
+            scheduler.step()
+            kacc = " ".join(f"acc@{k}={a:.2f}" for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True))
+            print(f"[train] epoch {epoch:3d}  loss={stats['loss']:.4f}  {kacc}")
+
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        save_tbrant_checkpoint(
+            model.cpu(),
+            checkpoint,
+            extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
+        )
+        print(f"[train] checkpoint saved to {checkpoint}")
+        return
 
     model = GNNPolicy()
     shuffle = np.random.default_rng(0)
