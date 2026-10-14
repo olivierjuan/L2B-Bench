@@ -53,6 +53,7 @@ from l2b_bench.methods.lookback.train import (
     lb_to_device,
     process_lookback,
 )
+from l2b_bench.methods.retrobranching.policy import retrobranching_method
 from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
 from l2b_bench.methods.tbrant.policy import tbrant_method
 from l2b_bench.methods.treegate.collect import (
@@ -89,6 +90,14 @@ METHOD_SPECS = {
         "prob": None,
         "method": treegate_method,
         "cache_name": "treegate_samples.pt",
+    },
+    # RetroBranching is the benchmark's first RL method: no expert to collect
+    # from, the agent itself explores (episodes solve fresh training
+    # instances), so it has no sample cache.
+    "retrobranching": {
+        "prob": None,
+        "method": retrobranching_method,
+        "cache_name": None,
     },
 }
 
@@ -272,6 +281,36 @@ def collect_expert_data(
         torch.save(all_samples, cache)
         print(f"[collect] samples cached to {cache}", flush=True)
     return all_samples
+
+
+def train_retrobranching(
+    episodes: int,
+    checkpoint: Path,
+    train_family: dict,
+    time_limit: float = 60.0,
+    buffer_min_length: int | None = None,
+) -> None:
+    """The official DQN loop: the agent explores, no expert in the loop.
+
+    Each episode solves a fresh instance drawn from the training family (a
+    solved model cannot drive a second environment), under the method's own
+    gasse_2019 solver parameters. ``episodes`` is the RL budget — the
+    imitation methods' ``--epochs`` has no equivalent here.
+    """
+    from gyozas.instances import SetCoverGenerator
+
+    from l2b_bench.methods.retrobranching import train
+    from l2b_bench.methods.retrobranching.train import BUFFER_MIN_LENGTH
+
+    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    train(
+        (next(generator) for _ in range(episodes)),
+        checkpoint,
+        episodes=episodes,
+        buffer_min_length=buffer_min_length or BUFFER_MIN_LENGTH,
+        time_limit=time_limit,
+        seed=0,
+    )
 
 
 def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dict, kind: str = "gasse") -> None:
@@ -533,17 +572,27 @@ def main() -> None:
     write_eval_instances(results_dir / "instances" / "setcover_pilot", args.eval_family)
     checkpoint = results_dir / f"{args.method}.pt"
     if args.retrain or not checkpoint.exists():
-        samples = collect_expert_data(
-            args.episodes,
-            args.train_family,
-            time_limit=args.collect_time_limit,
-            cache=results_dir / METHOD_SPECS[args.method]["cache_name"],
-            n_workers=args.collect_workers,
-            kind=args.method,
-        )
-        if not samples:
-            raise SystemExit("no expert samples collected — increase --episodes")
-        train_policy(samples, args.epochs, checkpoint, args.train_family, kind=args.method)
+        if args.method == "retrobranching":
+            # RL: the agent explores on fresh training instances — no expert
+            # data to collect (and --epochs has no role in the DQN loop).
+            train_retrobranching(
+                args.episodes,
+                checkpoint,
+                args.train_family,
+                time_limit=args.collect_time_limit,
+            )
+        else:
+            samples = collect_expert_data(
+                args.episodes,
+                args.train_family,
+                time_limit=args.collect_time_limit,
+                cache=results_dir / METHOD_SPECS[args.method]["cache_name"],
+                n_workers=args.collect_workers,
+                kind=args.method,
+            )
+            if not samples:
+                raise SystemExit("no expert samples collected — increase --episodes")
+            train_policy(samples, args.epochs, checkpoint, args.train_family, kind=args.method)
     else:
         print(f"[train] reusing checkpoint {checkpoint}")
     run_benchmark(checkpoint, results_dir, kind=args.method)

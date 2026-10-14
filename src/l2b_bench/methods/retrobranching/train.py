@@ -334,8 +334,24 @@ def train(
     buffer = ReplayBuffer(BUFFER_CAPACITY)
     rng = np.random.default_rng(seed)
 
+    def save() -> None:
+        """Checkpoint after every episode — a cluster job killed at its wall
+        time keeps everything learned so far."""
+        save_checkpoint(
+            model.cpu(),
+            checkpoint,
+            extra={
+                "episodes": episode_idx,
+                "buffer_min_length": buffer_min_length,
+                "seed": seed,
+                "total_updates": total_updates,
+            },
+        )
+        model.to(device)
+
     # Phase 1: fill the buffer with the agent's own episodes.
     episode_idx = 0
+    total_updates = 0
     while len(buffer) < buffer_min_length and episode_idx < episodes:
         experiences, env = run_episode(env, model, EPSILON, rng, device)
         added = add_episode_transitions(buffer, experiences, env)
@@ -344,9 +360,9 @@ def train(
             f"[train] fill episode {episode_idx:4d}  transitions={len(buffer):6d} "
             f"(+{added})  decisions={len(experiences)}"
         )
+        save()
 
     # Phase 2: every 10 transitions added buys one gradient step.
-    total_updates = 0
     loss_sum = 0.0
     while episode_idx < episodes:
         experiences, env = run_episode(env, model, EPSILON, rng, device)
@@ -360,14 +376,9 @@ def train(
             f"decisions={len(experiences)}  updates={total_updates}  "
             f"loss={loss_sum / max(total_updates, 1):.4f}"
         )
+        save()
 
-    save_checkpoint(
-        model.cpu(),
-        checkpoint,
-        extra={"episodes": episodes, "buffer_min_length": buffer_min_length, "seed": seed},
-    )
     log(f"[train] checkpoint saved to {checkpoint}")
-    model.to(device)
     return model
 
 
