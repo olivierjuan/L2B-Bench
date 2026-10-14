@@ -61,6 +61,7 @@ from l2b_bench.methods.mamba.collect import (
 from l2b_bench.methods.mamba.policy import mamba_method
 from l2b_bench.methods.retrobranching.policy import retrobranching_method
 from l2b_bench.methods.scavuzzo.policy import scavuzzo_method
+from l2b_bench.methods.sorrel.policy import sorrel_method
 from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
 from l2b_bench.methods.tbrant.policy import tbrant_method
 from l2b_bench.methods.tgppo.policy import tgppo_method
@@ -144,7 +145,20 @@ METHOD_SPECS = {
         "method": tgppo_method,
         "cache_name": None,
     },
+    # SORREL collects suboptimal VHB demonstrations (full strong branching
+    # w.p. 0.05, else pseudocosts) over the pseudo branching candidates — its
+    # own cache: the tree-MDP samples carry two children's graphs, nothing
+    # like the gasse samples.
+    "sorrel": {
+        "prob": 0.05,  # the official FSB_probability
+        "method": sorrel_method,
+        "cache_name": "sorrel_transitions.pt",
+    },
 }
+
+# SORREL's episode filter, scaled to the pilot's instances: the official
+# threshold (100 decisions) would drop every pilot episode outright.
+SORREL_SAMPLING_THRESHOLD = 10
 
 def parse_family(text: str) -> dict:
     """``"500x1000x0.05"`` → ``dict(n_rows=500, n_cols=1000, density=0.05)``."""
@@ -210,6 +224,12 @@ def _collect_one_episode(job):
         # Default SCIP: the solver-stats protocols keep heuristics on (the
         # official 'sandbox' deviation is documented in each collect.py).
         scip_params = {}
+    elif kind == "sorrel":
+        # The official VHB protocol: no cuts, no restarts of either kind, all
+        # primal heuristics off — and the pseudo branching candidates.
+        from l2b_bench.methods.sorrel.collect import SORREL_SCIP_PARAMS
+
+        scip_params = dict(SORREL_SCIP_PARAMS)
     else:
         scip_params = dict(GASSE_SCIP_PARAMS)
     scip_params["limits/time"] = time_limit
@@ -217,7 +237,10 @@ def _collect_one_episode(job):
     observation = (
         BranchingStateObservation() if kind in ("tbrant", "treegate", "mamba") else NodeBipartite()
     )
-    dynamics = BranchingDynamics(with_extra_actions=[ExtraBranchingActions.SKIP])
+    if kind == "sorrel":
+        dynamics = BranchingDynamics(pseudo_candidates=True)
+    else:
+        dynamics = BranchingDynamics(with_extra_actions=[ExtraBranchingActions.SKIP])
     if kind == "treegate":
         # The (s, k) augmentation cell: the dynamics takes the k random-explorer
         # decisions itself and seeds the variable permutation.
@@ -259,6 +282,19 @@ def _collect_one_episode(job):
             rng = np.random.default_rng(triplet.augmentation)
             if kind == "lookback":
                 samples, n_nodes, status = lookback_collect_episode(env, rng, probability)
+            elif kind == "sorrel":
+                from l2b_bench.methods.sorrel.collect import (
+                    LENGTH_LIMIT,
+                    collect_episode as sorrel_collect_episode,
+                )
+
+                samples, n_nodes, status = sorrel_collect_episode(
+                    env,
+                    rng,
+                    fsb_probability=probability,
+                    length_limit=LENGTH_LIMIT,
+                    sampling_threshold=SORREL_SAMPLING_THRESHOLD,
+                )
             else:
                 samples, n_nodes, status = collect_episode(env, rng, probability)
         return samples, n_nodes, status
@@ -440,6 +476,47 @@ def train_tgppo(
         episodes=episodes,
         time_limit=time_limit,
         seed=0,
+    )
+
+
+def train_sorrel(
+    samples: list,
+    epochs: int,
+    checkpoint: Path,
+    train_family: dict,
+    episodes: int,
+    time_limit: float = 60.0,
+) -> None:
+    """The two official stages: TD3BC offline over the VHB demonstrations,
+    then PPO + SIL online on fresh training instances.
+
+    Pilot-scale: the offline epochs cover one pass over the demonstrations
+    each (the official draws 624 batches with replacement from 100k samples),
+    and the online stage skips the official 10 buffer-filling pre-rollouts —
+    the pilot's episode budget goes straight to learning updates.
+    """
+    from gyozas.instances import SetCoverGenerator
+
+    from l2b_bench.methods.sorrel.train import train_online, train_td3bc
+
+    td3bc_checkpoint = checkpoint.parent / "sorrel_td3bc.pt"
+    train_td3bc(
+        samples,
+        td3bc_checkpoint,
+        epochs=epochs,
+        epoch_size=max(1, len(samples) // 32),
+        seed=0,
+    )
+
+    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    train_online(
+        (next(generator) for _ in range(episodes)),
+        td3bc_checkpoint,
+        checkpoint,
+        episodes=episodes,
+        time_limit=time_limit,
+        seed=0,
+        pre_rollouts=0,
     )
 
 
@@ -771,6 +848,27 @@ def main() -> None:
                 args.episodes,
                 args.train_family,
                 METHOD_SPECS[args.method]["variant"],
+                time_limit=args.collect_time_limit,
+            )
+        elif args.method == "sorrel":
+            # Offline RL on the VHB demonstrations, then online PPO + SIL on
+            # fresh training instances.
+            samples = collect_expert_data(
+                args.episodes,
+                args.train_family,
+                time_limit=args.collect_time_limit,
+                cache=results_dir / METHOD_SPECS[args.method]["cache_name"],
+                n_workers=args.collect_workers,
+                kind=args.method,
+            )
+            if not samples:
+                raise SystemExit("no VHB demonstrations collected — increase --episodes")
+            train_sorrel(
+                samples,
+                args.epochs,
+                checkpoint,
+                args.train_family,
+                args.episodes,
                 time_limit=args.collect_time_limit,
             )
         else:
