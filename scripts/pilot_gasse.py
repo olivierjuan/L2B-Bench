@@ -529,13 +529,18 @@ def train_sorrel(
     from l2b_bench.methods.sorrel.train import train_online, train_td3bc
 
     td3bc_checkpoint = checkpoint.parent / "sorrel_td3bc.pt"
-    train_td3bc(
-        samples,
-        td3bc_checkpoint,
-        epochs=epochs,
-        epoch_size=max(1, len(samples) // 32),
-        seed=0,
-    )
+    if td3bc_checkpoint.exists():
+        # Idempotent restart: the offline stage is deterministic (seed 0) and
+        # takes ~5h at pilot scale — a re-submission continues from it.
+        print(f"[train] reusing the cached td3bc stage from {td3bc_checkpoint}")
+    else:
+        train_td3bc(
+            samples,
+            td3bc_checkpoint,
+            epochs=epochs,
+            epoch_size=max(1, len(samples) // 32),
+            seed=0,
+        )
 
     generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
     train_online(
@@ -694,8 +699,8 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         return
 
     if kind == "cambranch":
-        from l2b_bench.methods.cambranch import train as train_cambranch
         from l2b_bench.methods.cambranch.train import PAIRS_PER_BATCH, subsample_budget
+        from l2b_bench.methods.cambranch.train import train as train_cambranch
 
         # The paper's data budget: 10% of the strong-branching samples — the
         # 90k AMILPs are free by feature transformation (Thm 3.1).
