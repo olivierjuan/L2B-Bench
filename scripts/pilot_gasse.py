@@ -36,6 +36,7 @@ from gyozas.runner import Cell, ExperimentConfig, Method, Runner
 
 from l2b_bench.methods.baselines import BASELINE_METHODS
 from l2b_bench.methods.cambranch.policy import cambranch_method
+from l2b_bench.methods.dsccl.policy import dsccl_method
 from l2b_bench.methods.gasse.model import GNNPolicy
 from l2b_bench.methods.gasse.policy import gasse_method
 from l2b_bench.methods.gasse.train import (
@@ -171,6 +172,15 @@ METHOD_SPECS = {
     "cambranch": {
         "prob": 0.5,
         "method": cambranch_method,
+        "cache_name": "expert_samples.pt",
+    },
+    # DSC-CL collects exactly like gasse too (the paper's regime is Gasse's:
+    # the Easy level of the 4 Ecole families, FSB expert) and diverges at
+    # training (stratified contrastive loss over K-means node groups) and at
+    # inference (hybrid top-5 + full SB at upstream nodes).
+    "dsccl": {
+        "prob": 0.5,
+        "method": dsccl_method,
         "cache_name": "expert_samples.pt",
     },
 }
@@ -698,6 +708,20 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
             epochs=epochs,
             pairs_per_batch=PAIRS_PER_BATCH,
             extra={"n_samples": len(kept), "epochs": epochs, "train_family": train_family},
+        )
+        return
+
+    if kind == "dsccl":
+        from l2b_bench.methods.dsccl.train import train as train_dsccl
+
+        # The paper trains on the full Easy-level collection (100k samples)
+        # with a fresh derivation draw per epoch — no budget subsampling.
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        train_dsccl(
+            samples,
+            checkpoint,
+            epochs=epochs,
+            extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
         )
         return
 

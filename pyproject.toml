@@ -8,6 +8,7 @@ dependencies = [
     # The harness. Path dependency until gyozas is published on PyPI; the
     # benchmark never reimplements harness mechanisms.
     "gyozas",
+    "scikit-learn>=1.7.2",
     "torch",
     "torch-geometric",
 ]
@@ -25,6 +26,10 @@ torch = { index = "pytorch-cpu" }
 
 [dependency-groups]
 dev = ["pytest"]
+
+[[tool.uv.index]]
+url = "https://nexus.retd.edf.fr/repository/pypi-all/simple"
+default = true
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
