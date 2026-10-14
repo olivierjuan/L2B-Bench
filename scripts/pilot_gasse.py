@@ -58,6 +58,7 @@ from l2b_bench.methods.mamba.collect import (
     MAMBA_S,
     collect_episode as mamba_collect_episode,
 )
+from l2b_bench.methods.bbmdp.policy import bbmdp_method
 from l2b_bench.methods.mamba.policy import mamba_method
 from l2b_bench.methods.retrobranching.policy import retrobranching_method
 from l2b_bench.methods.scavuzzo.policy import scavuzzo_method
@@ -153,6 +154,14 @@ METHOD_SPECS = {
         "prob": 0.05,  # the official FSB_probability
         "method": sorrel_method,
         "cache_name": "sorrel_transitions.pt",
+    },
+    # BBMDP is DQN from scratch on the corrected vanilla MDP: the agent
+    # itself explores (fresh instances every episode), so no sample cache —
+    # like retrobranching and tgppo.
+    "bbmdp": {
+        "prob": None,
+        "method": bbmdp_method,
+        "cache_name": None,
     },
 }
 
@@ -520,6 +529,38 @@ def train_sorrel(
     )
 
 
+def train_bbmdp(
+    episodes: int,
+    checkpoint: Path,
+    train_family: dict,
+    epochs: int,
+    time_limit: float = 60.0,
+) -> None:
+    """The official DQN loop: from scratch on the corrected vanilla MDP — no
+    expert data, the agent itself explores.
+
+    Each episode solves a fresh instance drawn from the training family
+    under the paper's DFS protocol (pre-solved draws are skipped, like the
+    official redraw). ``--episodes`` bounds the episodes; ``--epochs`` bounds
+    the gradient-step budget at the pilot's scale (the official counts 200k
+    gradient steps over unbounded episodes — here 625 gradient steps per
+    epoch, the other pilots' batch-per-epoch scale).
+    """
+    from gyozas.instances import SetCoverGenerator
+
+    from l2b_bench.methods.bbmdp.train import train
+
+    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    train(
+        generator,  # fresh instances forever; the episode budget stops the loop
+        checkpoint,
+        episodes=episodes,
+        n_epochs=epochs * 625,
+        time_limit=time_limit,
+        seed=42,
+    )
+
+
 def train_mamba(trajectories: list, epochs: int, checkpoint: Path, train_family: dict) -> None:
     """The official two-stage IL: contrastive pretraining, then the Mamba.
 
@@ -806,6 +847,16 @@ def main() -> None:
                 args.episodes,
                 checkpoint,
                 args.train_family,
+                time_limit=args.collect_time_limit,
+            )
+        elif args.method == "bbmdp":
+            # RL from scratch on the corrected vanilla MDP — no expert data
+            # either; --epochs bounds the gradient-step budget.
+            train_bbmdp(
+                args.episodes,
+                checkpoint,
+                args.train_family,
+                args.epochs,
                 time_limit=args.collect_time_limit,
             )
         elif args.method == "mamba":
