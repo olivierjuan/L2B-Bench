@@ -57,6 +57,7 @@ from l2b_bench.methods.retrobranching.policy import retrobranching_method
 from l2b_bench.methods.scavuzzo.policy import scavuzzo_method
 from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
 from l2b_bench.methods.tbrant.policy import tbrant_method
+from l2b_bench.methods.tgppo.policy import tgppo_method
 from l2b_bench.methods.treegate.collect import (
     TREEGATE_K,
     TREEGATE_S,
@@ -120,6 +121,14 @@ METHOD_SPECS = {
         "method": lambda checkpoint: scavuzzo_method(checkpoint, "tmdp+ObjLim"),
         "cache_name": "expert_samples.pt",
         "variant": "tmdp+ObjLim",
+    },
+    # TGPPO is PPO from scratch: no expert and no IL stage, so no sample
+    # cache either. The sandbox protocol (inline baseline solves, cutoff at
+    # the optimum, heuristics off) lives inside the method's train module.
+    "tgppo": {
+        "prob": None,
+        "method": tgppo_method,
+        "cache_name": None,
     },
 }
 
@@ -362,6 +371,34 @@ def train_scavuzzo(
         checkpoint,
         episodes=episodes,
         variant=variant,
+        time_limit=time_limit,
+        seed=0,
+    )
+
+
+def train_tgppo(
+    episodes: int,
+    checkpoint: Path,
+    train_family: dict,
+    time_limit: float = 60.0,
+) -> None:
+    """The official PPO loop: from scratch, no imitation stage.
+
+    Each episode solves a fresh instance drawn from the training family
+    under the paper's 'sandbox' setting — the method's own train module
+    solves each instance once for the reward baseline and sets the cutoff
+    at that optimum, so an episode costs roughly two solves. One PPO
+    update every EPISODES_PER_UPDATE (125) rollouts.
+    """
+    from gyozas.instances import SetCoverGenerator
+
+    from l2b_bench.methods.tgppo.train import train
+
+    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    train(
+        (next(generator) for _ in range(episodes)),
+        checkpoint,
+        episodes=episodes,
         time_limit=time_limit,
         seed=0,
     )
@@ -630,6 +667,15 @@ def main() -> None:
             # RL: the agent explores on fresh training instances — no expert
             # data to collect (and --epochs has no role in the DQN loop).
             train_retrobranching(
+                args.episodes,
+                checkpoint,
+                args.train_family,
+                time_limit=args.collect_time_limit,
+            )
+        elif args.method == "tgppo":
+            # RL from scratch under the paper's sandbox protocol — no expert
+            # data to collect (--epochs again has no role in the PPO loop).
+            train_tgppo(
                 args.episodes,
                 checkpoint,
                 args.train_family,
