@@ -11,3 +11,6 @@ data/**/*.lp
 
 # Run records: outputs, archived per campaign, never in git.
 results/
+
+# SLURM job logs.
+logs/
