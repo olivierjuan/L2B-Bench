@@ -24,11 +24,12 @@ set -euo pipefail
 REPO=/fsmedium/work/rd/turing/L2B-Bench
 # sbatch --export=METHOD=lookback,RESULTS=$REPO/results/lookback_gpu_v1
 # drives the Lookback port through the same campaign (METHOD_SPECS in
-# scripts/pilot_gasse.py); the default is the Gasse campaign.
+# scripts/pilot_gasse.py); the default is the Gasse campaign. EPISODES and
+# EPOCHS are overridable the same way for smoke tests.
 METHOD=${METHOD:-gasse}
 RESULTS=${RESULTS:-$REPO/results/gasse_gpu_v2}
-EPISODES=100
-EPOCHS=100
+EPISODES=${EPISODES:-100}
+EPOCHS=${EPOCHS:-100}
 # The paper trains AND tests on the same set-cover family — it never claims
 # cross-family transfer, and v1 (results/gasse_gpu_v1, trained 500x1000x0.05,
 # evaluated 500x600x0.10) confirmed it: top-1 agreement with the SB expert

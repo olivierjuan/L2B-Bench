@@ -62,6 +62,14 @@ runner.run()
       the baselines through the runner
       (`src/l2b_bench/methods/gasse/`, `scripts/pilot_gasse.py`,
       `tests/test_gasse_pilot.py`)
-- [ ] The seven other methods
+- [x] Lookback 2022 port: root+lookback collection, parent-child pairs, PAT
+      distillation (`src/l2b_bench/methods/lookback/`,
+      `tests/test_lookback_pilot.py`)
+- [x] T-BranT 2022 port (LTBranT variant): relpscost expert on the
+      BranchingState observation, BranchFormer with tree gating + BiMatching,
+      Noam schedule (`src/l2b_bench/methods/tbrant/`,
+      `tests/test_tbrant_pilot.py`; the tree GAT of the full T-BranT is
+      future work)
+- [ ] The five other methods
 - [ ] G2 protocol freeze
 - [ ] Full campaign (methods × strates × 5 seeds) on the lab cluster
