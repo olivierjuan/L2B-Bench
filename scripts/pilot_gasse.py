@@ -61,6 +61,7 @@ from l2b_bench.methods.mamba.collect import (
     collect_episode as mamba_collect_episode,
 )
 from l2b_bench.methods.bbmdp.policy import bbmdp_method
+from l2b_bench.methods.fmsts.policy import fmsts_method
 from l2b_bench.methods.mamba.policy import mamba_method
 from l2b_bench.methods.retrobranching.policy import retrobranching_method
 from l2b_bench.methods.scavuzzo.policy import scavuzzo_method
@@ -182,6 +183,14 @@ METHOD_SPECS = {
         "prob": 0.5,
         "method": dsccl_method,
         "cache_name": "expert_samples.pt",
+    },
+    # FMSTS is RL from scratch with observed subtree-size Q-values: the agent
+    # explores a fixed instance pool (redrawn every iteration, like the
+    # paper's 200 training instances), so no sample cache either.
+    "fmsts": {
+        "prob": None,
+        "method": fmsts_method,
+        "cache_name": None,
     },
 }
 
@@ -586,6 +595,47 @@ def train_bbmdp(
     )
 
 
+def train_fmsts(
+    episodes: int,
+    checkpoint: Path,
+    train_family: dict,
+    epochs: int,
+    eval_family: dict,
+    time_limit: float = 60.0,
+) -> None:
+    """The paper's Algorithm 1: RL from scratch with observed subtree-size
+    Q-values — no expert, the agent itself explores a fixed pool.
+
+    The paper draws each iteration's instance from 200 fixed training
+    instances; the pilot writes/reuses ``episodes`` set covers and redraws
+    uniformly (a fresh model is read per draw — a solved model cannot drive a
+    second environment). ``--episodes`` sizes the pool, ``--epochs`` scales
+    the iteration budget (episodes x epochs iterations, one gradient update
+    each, like Algorithm 1). The canonical padding is the evaluation family's
+    shape so the fitted PCA applies to the benchmark's instances.
+    """
+    from gyozas.instances import SetCoverGenerator
+
+    from l2b_bench.methods.fmsts.train import train
+
+    instance_dir = checkpoint.parent / "fmsts_train_instances"
+    instance_dir.mkdir(parents=True, exist_ok=True)
+    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    for i in range(episodes):
+        path = instance_dir / f"train_{i:03d}.mps"
+        if not path.exists():
+            next(generator).writeProblem(filename=str(path), genericnames=True, verbose=False)
+    print(f"[train] {episodes} pool instances in {instance_dir}", flush=True)
+    train(
+        instance_dir,
+        checkpoint,
+        iterations=episodes * max(1, epochs),
+        canonical=(eval_family["n_rows"], eval_family["n_cols"]),
+        time_limit=time_limit,
+        seed=42,
+    )
+
+
 def train_mamba(trajectories: list, epochs: int, checkpoint: Path, train_family: dict) -> None:
     """The official two-stage IL: contrastive pretraining, then the Mamba.
 
@@ -914,6 +964,17 @@ def main() -> None:
                 checkpoint,
                 args.train_family,
                 args.epochs,
+                time_limit=args.collect_time_limit,
+            )
+        elif args.method == "fmsts":
+            # RL from scratch with observed subtree-size Q-values over a fixed
+            # redrawn pool — no expert data; --epochs scales the iterations.
+            train_fmsts(
+                args.episodes,
+                checkpoint,
+                args.train_family,
+                args.epochs,
+                args.eval_family,
                 time_limit=args.collect_time_limit,
             )
         elif args.method == "mamba":
