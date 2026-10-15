@@ -2,10 +2,10 @@
 
 https://github.com/olivierjuan/L2B-Bench
 
-The unified learn2branch benchmark: the eight methods of the literature
+The unified learn2branch benchmark: the methods of the literature
 (Gasse 2019, TreeGate 2021, T-BranT 2022, Lookback 2022, RetroBranching 2022,
-Scavuzzo 2022, TGPPO 2025, Mamba-Branching 2026) compared on the same
-instances, solver, seeds, and metrics.
+Scavuzzo 2022, TGPPO 2025, Mamba-Branching 2026, Seq-BnB 2026, and more)
+compared on the same instances, solver, seeds, and metrics.
 
 **This repository is the benchmark; [GYOZAS](../gyozas) is the harness.** All
 mechanisms — policy contract, experts, augmentation, runner, metrics,
@@ -58,18 +58,61 @@ runner.run()
 
 - [x] Strate data + signed manifests (moved from GYOZAS)
 - [x] Baseline grid (default solver, pscost, relpscost)
-- [x] Gasse 2019 pilot: collect SB trajectories → train GCNN → evaluate vs
-      the baselines through the runner
-      (`src/l2b_bench/methods/gasse/`, `scripts/pilot_gasse.py`,
-      `tests/test_gasse_pilot.py`)
-- [x] Lookback 2022 port: root+lookback collection, parent-child pairs, PAT
-      distillation (`src/l2b_bench/methods/lookback/`,
-      `tests/test_lookback_pilot.py`)
-- [x] T-BranT 2022 port (LTBranT variant): relpscost expert on the
-      BranchingState observation, BranchFormer with tree gating + BiMatching,
-      Noam schedule (`src/l2b_bench/methods/tbrant/`,
-      `tests/test_tbrant_pilot.py`; the tree GAT of the full T-BranT is
-      future work)
-- [ ] The five other methods
+- [x] All method ports (one package per paper under `src/l2b_bench/methods/`):
+      gasse, lookback, tbrant, treegate, retrobranching, scavuzzo (three
+      variants), tgppo, mamba, cambranch, dsccl, fmsts, sorrel, bbmdp, seqbnb,
+      plus the `gasse-relpscost` control arm (same protocol as gasse with the
+      scalable expert — measured cost of the expert switch: +25.7% nodes)
+- [x] Pilot campaign (2026-10): every method trained and evaluated at pilot
+      scale on set covers — results below
+- [ ] Sorrel pilot campaign (job running; results land in `results/sorrel_gpu_v1`)
 - [ ] G2 protocol freeze
 - [ ] Full campaign (methods × strates × 5 seeds) on the lab cluster
+
+## Pilot campaign results
+
+Pilot scale, on the setcover strate (500×600×0.10): 6 instances × 5 seeds,
+120 s budget, identical protocol/instances/seeds across all campaigns —
+baseline columns are bit-identical between campaign summaries, so the
+comparisons are paired. Metric: shifted geometric mean of per-instance
+B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
+
+| Method | SGM nodes vs default |
+|---|---:|
+| **seqbnb** (joint branching + node selection, DAgger) | **1.016×** 🏆 |
+| lookback | 1.293× |
+| scavuzzo tmdp+objlim | 1.529× |
+| cambranch | 1.557× |
+| dsccl | 1.616× |
+| mamba | 1.621× |
+| treegate | 1.671× |
+| *relpscost* (baseline expert) | *1.677×* |
+| gasse | 2.996× |
+| retrobranching | 3.162× |
+| *pscost* (baseline expert) | *3.436×* |
+| tbrant | 3.481× |
+| gasse-relpscost (control arm) | 3.766× |
+| scavuzzo mdp | 5.074× |
+| tgppo | 7.728× |
+| scavuzzo tmdp+dfs | 8.620× |
+| bbmdp | 9.009× |
+| fmsts | 20.263× |
+
+Reading notes, at pilot scale:
+
+- **Seq-BnB reaches near-parity with SCIP's default** (1.016×, best of the
+  benchmark; 3 of 30 runs below 1.0×). It is the only port that trains both
+  branching and node selection jointly.
+- The imitation-learning methods with a full-fidelity expert label
+  (seqbnb, lookback) sit at the top; RL-from-scratch methods (tgppo, bbmdp,
+  fmsts, retrobranching) are undertrained at this scale — their published
+  regimes need far more episodes.
+- **gasse vs gasse-relpscost (+25.7%)** prices the switch from strong
+  branching to the scalable relpscost expert for labels: relpscost labels are
+  much easier to imitate (acc@1 0.73 vs ~0.40) but imitate a weaker expert.
+- Cross-family transfer does not hold (the first gasse campaign, trained on
+  500×1000×0.05 and evaluated on 500×600×0.10, scored 27.0×); the numbers
+  above are all train-family = eval-family.
+
+Full per-run records: `results/<campaign>/` (each `summary.json` carries the
+grid's mean node counts, statuses, and the SGM of paired ratios).
