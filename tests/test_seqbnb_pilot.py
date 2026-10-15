@@ -350,6 +350,36 @@ class TestSeqBnBModel:
         ]
         assert gradients and any(float(g.abs().sum()) > 0 for g in gradients)
 
+    def test_repeated_epochs_stay_finite(self, tmp_path):
+        """Regression (GPU campaign): torch 2.13's fused SDPA backward
+        kernels produce NaN gradients on CUDA when the attention carries a
+        padding mask — the model pins the exact math backend (see
+        ``SeqBnBModel.forward``). Several epochs of real updates must keep
+        losses and weights finite. (CPU runs the exact backend anyway; the
+        assertion guards the wrapper and the training loop.)"""
+        import torch
+
+        from l2b_bench.methods.seqbnb.model import SeqBnBModel
+        from l2b_bench.methods.seqbnb.train import BATCH_SIZE, LR, joint_loss
+
+        samples = self._samples(tmp_path, n_files=3)
+        torch.manual_seed(0)
+        model = SeqBnBModel()
+        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+        for _ in range(8):
+            for start in range(0, len(samples), BATCH_SIZE):
+                batch = samples[start : start + BATCH_SIZE]
+                optimizer.zero_grad()
+                loss = joint_loss(model, batch, torch.device("cpu"))
+                loss.backward()
+                assert torch.isfinite(loss)
+                assert all(
+                    torch.isfinite(p).all()
+                    for p in model.parameters()
+                    if p.requires_grad
+                )
+                optimizer.step()
+
 
 class TestPolicyAndTraining:
     def _policy_episode(self, tmp_path, model=None):

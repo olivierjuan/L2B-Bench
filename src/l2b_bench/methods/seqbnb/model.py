@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from ..gasse.model import BipartiteGraphConvolution
 from .collect import ACTION_TOKEN_DIM, NODE_TOKEN_DIM, SeqBnBSample
@@ -324,7 +325,20 @@ class SeqBnBModel(torch.nn.Module):
         return torch.cat([node, graph, action], dim=1)
 
     def forward(self, batch: SeqBnBBatch) -> list[torch.Tensor]:
-        """Logits over each sample's action set (variable length, by kind)."""
+        """Logits over each sample's action set (variable length, by kind).
+
+        Both attentions run under the exact (math) SDPA backend: torch
+        2.13's fused kernels (flash / memory-efficient) produce NaN
+        *gradients* on CUDA when the attention carries a padding mask —
+        measured on the campaign A5000: finite losses, NaN gradients at
+        the encoder's input, weights poisoned within a few epochs. The
+        sequences are short (bounded by the L_max window), so the exact
+        backend's cost is negligible.
+        """
+        with sdpa_kernel([SDPBackend.MATH]):
+            return self._forward(batch)
+
+    def _forward(self, batch: SeqBnBBatch) -> list[torch.Tensor]:
         variables = self._variable_embeddings(batch)
         pooled = torch.stack(
             [
