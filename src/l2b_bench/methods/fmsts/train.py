@@ -41,6 +41,11 @@ EPSILON_END = 0.05
 #: A floor on the PER priorities so a perfectly predicted sample stays
 #: reachable in principle (numerical only — Eq 6 is the raw |Q - Q_hat|/Q).
 PRIOR_EPS = 1e-6
+#: Rows per forward pass over an episode (the Q-hat priorities): a long
+#: random episode on the 500x600 family reaches tens of thousands of
+#: decisions, and one [episode, 600, hidden] activation block overflows
+#: the GPU — the priorities need no gradients, so chunks are exact.
+EPISODE_CHUNK = 2048
 
 
 def get_device() -> torch.device:
@@ -122,26 +127,36 @@ class FMSTSReplay:
 
 
 def _q_at_actions(
-    model: MDANetwork, experiences: list[FMSTSExperience], device: torch.device
+    model: MDANetwork,
+    experiences: list[FMSTSExperience],
+    device: torch.device,
+    chunk: int = EPISODE_CHUNK,
 ) -> torch.Tensor:
-    """Q_hat at each experience's taken action — one batched forward pass per
-    episode (the pool is homogeneous, so the dynamic blocks stack)."""
-    static = torch.as_tensor(
-        np.stack([e.observation.static for e in experiences]),
-        dtype=torch.float32,
-        device=device,
-    )
-    dynamic = torch.as_tensor(
-        np.stack([e.observation.dynamic for e in experiences]),
-        dtype=torch.float32,
-        device=device,
-    )
-    actions = torch.as_tensor(
-        [e.action for e in experiences], dtype=torch.long, device=device
-    )
+    """Q_hat at each experience's taken action — batched forward passes over
+    the episode in chunks (the pool is homogeneous, so the dynamic blocks
+    stack). No gradients flow here, so the chunking is exact: a long random
+    episode reaches tens of thousands of decisions and one monolithic
+    [episode, n_vars, hidden] activation block overflows the GPU."""
+    q_hats = []
     with torch.no_grad():
-        values = model(static, dynamic)
-        return values.gather(1, actions.unsqueeze(1)).squeeze(1)
+        for start in range(0, len(experiences), chunk):
+            batch = experiences[start : start + chunk]
+            static = torch.as_tensor(
+                np.stack([e.observation.static for e in batch]),
+                dtype=torch.float32,
+                device=device,
+            )
+            dynamic = torch.as_tensor(
+                np.stack([e.observation.dynamic for e in batch]),
+                dtype=torch.float32,
+                device=device,
+            )
+            actions = torch.as_tensor(
+                [e.action for e in batch], dtype=torch.long, device=device
+            )
+            values = model(static, dynamic)
+            q_hats.append(values.gather(1, actions.unsqueeze(1)).squeeze(1))
+    return torch.cat(q_hats)
 
 
 def _loss_update(

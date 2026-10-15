@@ -245,6 +245,43 @@ class TestMDA:
         assert all(p.grad is not None for p in model.parameters())
 
 
+    def test_q_at_actions_chunks_long_episodes_exactly(self):
+        # The Q-hat priorities are computed one episode at a time; a long
+        # random episode reaches tens of thousands of decisions and one
+        # monolithic [episode, n_vars, hidden] activation block overflows
+        # the GPU. The chunked pass must be exact.
+        from types import SimpleNamespace as _NS
+
+        from l2b_bench.methods.fmsts.train import _q_at_actions
+
+        torch.manual_seed(0)
+        model = MDANetwork(n_pca=3)
+        rng = np.random.default_rng(0)
+        experiences = [
+            _NS(
+                observation=_NS(
+                    static=rng.normal(size=3),
+                    dynamic=rng.normal(size=(4, N_DYNAMIC_FEATURES)),
+                ),
+                action=int(rng.integers(4)),
+            )
+            for _ in range(10)
+        ]
+        chunked = _q_at_actions(model, experiences, torch.device("cpu"), chunk=3)
+        # The unchunked forward on the same episode.
+        static = torch.as_tensor(
+            np.stack([e.observation.static for e in experiences]), dtype=torch.float32
+        )
+        dynamic = torch.as_tensor(
+            np.stack([e.observation.dynamic for e in experiences]), dtype=torch.float32
+        )
+        actions = torch.as_tensor([e.action for e in experiences], dtype=torch.long)
+        with torch.no_grad():
+            full = model(static, dynamic).gather(1, actions.unsqueeze(1)).squeeze(1)
+        torch.testing.assert_close(chunked, full)
+        assert chunked.shape == (10,)
+
+
 class TestReplay:
     def test_priorities_drive_sampling(self):
         buffer = FMSTSReplay(size=4)
