@@ -180,11 +180,11 @@ class TestReferenceOptimum:
 
 
 class TestEpisode:
-    def _episode(self, tmp_path, n_files=6):
-        """Env + reference resolver over a pool: episodes run until one
-        branches (most small set covers close at the root — those episodes
-        still consult the node selection)."""
-        _write_pool(tmp_path, n_files)
+    def _episode(self, tmp_path, n_files=4):
+        """Env + reference resolver over a pool of the 200x250 family —
+        those instances branch reliably (the 120x150 family mostly closes
+        at the root, so a branching draw is not guaranteed)."""
+        _write_pool(tmp_path, n_files, rows=200, cols=250)
         generator = PoolGenerator(tmp_path, rng=np.random.default_rng(0))
         env = make_env(generator)
         references = ReferenceCache()
@@ -285,3 +285,67 @@ class TestPoolGenerator:
     def test_empty_pool_is_an_error(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             PoolGenerator(tmp_path)
+
+
+class TestSeqBnBModel:
+    def _samples(self, tmp_path, n_files=6):
+        """Real collected samples (both kinds, at least one branching)."""
+        _write_pool(tmp_path, n_files, rows=200, cols=250)
+        generator = PoolGenerator(tmp_path, rng=np.random.default_rng(0))
+        env = make_env(generator)
+        references = ReferenceCache()
+        samples = []
+        try:
+            for _ in range(8):
+                episode, _n_nodes, _status = run_episode(
+                    env,
+                    lambda s, d, e: e,
+                    lambda _e: references.get(generator.current_path),
+                )
+                samples.extend(episode)
+                if any(s.kind == DecisionKind.BRANCHING for s in episode):
+                    return samples
+        finally:
+            env.close()
+        raise AssertionError("no drawn instance branched")
+
+    def test_collate_and_forward_shapes(self, tmp_path):
+        from l2b_bench.methods.seqbnb.model import collate
+
+        samples = self._samples(tmp_path)
+        batch = collate(samples)
+        # Node-selection samples score the open nodes; branching samples the
+        # LP candidates — one logit per action, per sample.
+        from l2b_bench.methods.seqbnb.model import SeqBnBModel
+
+        model = SeqBnBModel()
+        logits = model(batch)
+        assert len(logits) == len(samples)
+        for sample, sample_logits in zip(samples, logits, strict=True):
+            n_actions = len(
+                sample.open_ids
+                if sample.kind == DecisionKind.NODE_SELECTION
+                else sample.candidates
+            )
+            assert sample_logits.shape == (n_actions,)
+
+    def test_joint_loss_backpropagates(self, tmp_path):
+        import torch
+
+        from l2b_bench.methods.seqbnb.model import SeqBnBModel, collate
+
+        samples = self._samples(tmp_path)
+        model = SeqBnBModel()
+        batch = collate(samples)
+        logits = model(batch)
+        loss = sum(
+            torch.nn.functional.cross_entropy(
+                logit.unsqueeze(0), batch.labels[i : i + 1], reduction="sum"
+            )
+            for i, logit in enumerate(logits)
+        )
+        loss.backward()
+        gradients = [
+            p.grad for p in model.parameters() if p.requires_grad and p.grad is not None
+        ]
+        assert gradients and any(float(g.abs().sum()) > 0 for g in gradients)

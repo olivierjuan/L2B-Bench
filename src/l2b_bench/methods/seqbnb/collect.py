@@ -120,6 +120,7 @@ class SeqBnBSample:
     open_ids: NDArray[np.int64] | None
     candidates: NDArray[np.int64] | None
     history: NDArray[np.float64]  # (t, 6) past action tokens (graph slots zeroed)
+    history_kinds: NDArray[np.int64]  # (t,) DecisionKind of each past decision
     action: int
     expert_action: int
     t: int
@@ -322,6 +323,7 @@ def run_episode(
     order: list[int] = []  # node numbers, creation (first-seen) order
     visited: set[int] = set()
     history: list[np.ndarray] = []  # past action tokens (graph slots zeroed)
+    history_kinds: list[int] = []  # DecisionKind of each past decision
     cached_graph: BipartiteGraph | None = None
 
     while not done:
@@ -360,6 +362,7 @@ def run_episode(
             # The sample's history carries the PAST decisions only — at
             # inference the current action is the unknown being scored.
             past = np.stack(history) if history else np.zeros((0, ACTION_TOKEN_DIM))
+            past_kinds = np.array(history_kinds, dtype=np.int64)
             visited.add(action)
             history.append(
                 np.array(
@@ -370,6 +373,7 @@ def run_episode(
                     dtype=np.float64,
                 )
             )
+            history_kinds.append(int(DecisionKind.NODE_SELECTION))
         else:
             n_nodes += 1
             graph = bipartite.extract(env.model, done=False)
@@ -396,11 +400,13 @@ def run_episode(
                 expert = _argmax_finite(np.asarray(scores), state.candidates)
             action = int(select_action(state, decision, expert))
             past = np.stack(history) if history else np.zeros((0, ACTION_TOKEN_DIM))
+            past_kinds = np.array(history_kinds, dtype=np.int64)
             history.append(
                 np.array(
                     [state.gap, state.n_open, state.t, 0.0, 0.0, 0.0], dtype=np.float64
                 )
             )
+            history_kinds.append(int(DecisionKind.BRANCHING))
 
         if expert is not None:
             samples.append(
@@ -413,6 +419,7 @@ def run_episode(
                     if state.candidates is None
                     else state.candidates.copy(),
                     history=past,
+                    history_kinds=past_kinds,
                     action=action,
                     expert_action=int(expert),
                     t=state.t,
