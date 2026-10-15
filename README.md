@@ -30,10 +30,10 @@ implementation it was ported from (references verified October 2026).
 | `cambranch` | Lin, Xiu, You, Chen, Cai — *Contrastive Learning with Augmented MILPs for Learning to Branch* | ICLR 2024 | paper-only port (no official repository) |
 | `fmsts` | Etheve, Alès, Bissuel, Juan, Kedad-Sidhoum — *Reinforcement Learning for Variable Selection in a Branch and Bound Algorithm* ([arXiv 2005.10026](https://arxiv.org/abs/2005.10026)) | 2020 | paper-only port |
 | `sorrel` | Feng, Yang — *SORREL: Suboptimal-Demonstration-Guided Reinforcement Learning for Learning to Branch* ([arXiv 2412.15534](https://arxiv.org/abs/2412.15534)) | AAAI 2025 | [Shengyu-Feng/SORREL](https://github.com/Shengyu-Feng/SORREL) |
-| `tgppo` | *Tree-Gate PPO* ([arXiv 2511.12986](https://arxiv.org/abs/2511.12986)) | AAAI 2026 | [benmhamed-a/tgppo-aaai-26](https://github.com/benmhamed-a/tgppo-aaai-26) |
+| `tgppo` | Ben Mhamed, Kamal-Idrissi, El Fallah Seghrouchni — *Learning Branching Policies for MILPs with Proximal Policy Optimization* (the tree-gate PPO method; [arXiv 2511.12986](https://arxiv.org/abs/2511.12986)) | AAAI 2026 | [benmhamed-a/tgppo-aaai-26](https://github.com/benmhamed-a/tgppo-aaai-26) |
 | `dsccl` | Lu, Ma, Tao — *Dynamic Stratified Contrastive Learning with Upstream Augmentation for MILP Branching* ([arXiv 2511.21107](https://arxiv.org/abs/2511.21107)) | preprint 2025 | paper-only port |
-| `mamba` | Mamba-Branching | 2026 | [doctor-watson626/Mamba-Branching](https://github.com/doctor-watson626/Mamba-Branching) (the repo is the reference — no paper citation recorded there) |
-| `bbmdp` | Forel et al. — *A Markov decision process for variable selection in branch & bound* | NeurIPS 2025 | [abfariah/bbmdp](https://github.com/abfariah/bbmdp) |
+| `mamba` | Mamba-Branching (no paper record found; the repository — anonymous, "DoctorWatson", mirrored from Gitee — is the reference) | 2026 | [doctor-watson626/Mamba-Branching](https://github.com/doctor-watson626/Mamba-Branching) |
+| `bbmdp` | Strang, Alès, Bissuel, Juan, Kedad-Sidhoum, Rachelson — *A Markov Decision Process for Variable Selection in Branch & Bound* ([arXiv 2510.19348](https://arxiv.org/abs/2510.19348)) | NeurIPS 2025 | [abfariah/bbmdp](https://github.com/abfariah/bbmdp) |
 | `seqbnb` | Liu, Liu, Yan, Shi, Zhao — *Seq-BnB: Sequence Model for Branch-and-Bound Node Selection and Branching* ([arXiv 2610.14835](https://arxiv.org/abs/2610.14835)) | 2026 | paper-only port (code promised upon publication) |
 | `gasse-relpscost` | control arm of the benchmark, not a published method: Gasse's protocol with the scalable expert (see the pilot results) | — | — |
 

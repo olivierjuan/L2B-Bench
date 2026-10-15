@@ -1,7 +1,10 @@
 """TGPPO 2025 (Tree-Gate PPO) — PPO on solver-statistics states.
 
-Paper: "Tree-Gate PPO" (AAAI 2026, arXiv 2511.12986). Official
-implementation: github.com/benmhamed-a/tgppo-aaai-26 (verified; see GYOZAS
+Paper: "Learning Branching Policies for MILPs with Proximal Policy
+Optimization" (arXiv 2511.12986, AAAI 2026), Abdelouahed Ben Mhamed,
+Assia Kamal-Idrissi, Amal El Fallah Seghrouchni — the method is the
+tree-gate PPO ("Tree-Gate PPO") of that paper. Official implementation:
+github.com/benmhamed-a/tgppo-aaai-26 (verified; see GYOZAS
 docs/references.md).
 
 Fidelity profile ``tgppo``: the 25+8+53 ``BranchingStateObservation``

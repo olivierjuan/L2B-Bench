@@ -63,7 +63,7 @@ def bbmdp_method(checkpoint: str | Path) -> Method:
         policy=lambda: BBMDPPolicy.from_checkpoint(checkpoint),
         config={
             "checkpoint": str(checkpoint),
-            "architecture": "DQN GCNN with an HL-Gauss value head (BBMDP, Forel et al., 2025)",
+            "architecture": "DQN GCNN with an HL-Gauss value head (BBMDP, Strang et al., 2025)",
         },
         fidelity="bbmdp",
     )

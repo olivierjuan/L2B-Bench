@@ -1,4 +1,4 @@
-"""BBMDP 2025 (Forel et al., NeurIPS 2025) — episode collection over the
+"""BBMDP 2025 (Strang et al., NeurIPS 2025) — episode collection over the
 corrected vanilla MDP.
 
 Faithful port of the official repository (github.com/abfariah/bbmdp,

@@ -1,4 +1,4 @@
-"""End-to-end tests of the BBMDP 2025 (Forel et al., NeurIPS 2025) port.
+"""End-to-end tests of the BBMDP 2025 (Strang et al., NeurIPS 2025) port.
 
 The instances are tiny set covers — the point is that the whole regime runs
 on the harness (vanilla-MDP episodes under the DFS protocol → retrospective
