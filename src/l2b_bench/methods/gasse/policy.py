@@ -67,3 +67,21 @@ def gasse_method(checkpoint: str | Path) -> Method:
         config={"checkpoint": str(checkpoint), "architecture": "GCNN (Gasse et al., 2019)"},
         fidelity="gasse",
     )
+
+
+def gasse_relpscost_method(checkpoint: str | Path) -> Method:
+    """R6.4's control arm: the same GCNN, trained on relpscost labels.
+
+    The ``gasse-relpscost`` fidelity profile recharges Gasse's regime with
+    the scalable expert swapped in; run against the gasse method on the same
+    synthetic strata, the pair prices the cost of the switch.
+    """
+    return Method(
+        name="gasse-relpscost",
+        policy=lambda: GassePolicy.from_checkpoint(checkpoint),
+        config={
+            "checkpoint": str(checkpoint),
+            "architecture": "GCNN (Gasse et al., 2019), relpscost labels",
+        },
+        fidelity="gasse-relpscost",
+    )

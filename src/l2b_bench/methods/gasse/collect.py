@@ -12,6 +12,10 @@ Faithful port of ``02_generate_dataset.py`` from the official repository
 This is the Zarpellon-style exploration of the paper: the expert data covers
 states the pure-expert trajectory would never visit.
 
+``expert="relpscost"`` swaps the recorded expert for SCIP's reliability
+pseudocost score (R6.4's control arm — the ``gasse-relpscost`` fidelity
+profile): same protocol, same observation, scalable labels.
+
 SCIP parameters are the paper's protocol, verified on SCIP 10
 (``separating/maxrounds``, ``presolving/maxrestarts``, ``timing/clocktype``
 all exist with the same semantics):
@@ -89,26 +93,48 @@ def _argmax_finite(scores: np.ndarray, action_set: np.ndarray) -> int | None:
     return best
 
 
+def _relpscost_scores(expert, model) -> np.ndarray | None:
+    """SCIP's pseudocost scores as a full LP-position vector (``-inf`` where
+    the LP offers no branching candidate), the layout the strong-branching
+    extractor returns — the sample records the same shape either way."""
+    scores = expert.scores(model)
+    if not scores:
+        return None
+    out = np.full(max(scores) + 1, -np.inf)
+    for position, score in scores.items():
+        out[position] = score
+    return out
+
+
 def collect_episode(
     env: Environment,
     rng: np.random.Generator,
     expert_probability: float = 0.5,
     metadata: CollectionMetadata | None = None,
+    expert: str = "strong_branching",
 ) -> tuple[list[BranchingSample], int, str]:
     """Run one episode under explore-then-strong-branch; return its samples.
 
     The environment must be configured with the ``NodeBipartite`` observation
     and the gasse SCIP parameters (see :func:`collect`). The multi-optimal
-    record (R4.3) accumulates into ``metadata`` when given.
+    record (R4.3) accumulates into ``metadata`` when given. ``expert``
+    selects the recorded labels: the paper's strong branching, or
+    ``"relpscost"`` (R6.4's scalable-expert control arm).
     """
+    if expert not in ("strong_branching", "relpscost"):
+        raise ValueError(f"unknown expert: {expert!r}")
+    from gyozas.experts import RelpscostExpert
+
     pseudocosts = Pseudocosts()
-    strong_branching = StrongBranchingScores()
+    strong_branching = StrongBranchingScores() if expert == "strong_branching" else None
+    relpscost = RelpscostExpert() if expert == "relpscost" else None
     samples: list[BranchingSample] = []
     n_nodes = 0
 
     obs, action_set, _reward, done, info = env.reset()
     pseudocosts.reset(env.model)
-    strong_branching.reset(env.model)
+    if strong_branching is not None:
+        strong_branching.reset(env.model)
     status = info.get("status")
 
     while not done:
@@ -121,7 +147,10 @@ def collect_episode(
 
         query_expert = rng.random() < expert_probability
         if query_expert:
-            scores = strong_branching.extract(env.model, done=False)
+            if strong_branching is not None:
+                scores = strong_branching.extract(env.model, done=False)
+            else:
+                scores = _relpscost_scores(relpscost, env.model)
         else:
             scores = pseudocosts.extract(env.model, done=False)
 
@@ -156,6 +185,7 @@ def collect(
     expert_probability: float = 0.5,
     time_limit: float = GASSE_TIME_LIMIT,
     on_episode: Any = None,
+    expert: str = "strong_branching",
 ) -> CollectionResult:
     """Collect expert samples over ``n_episodes`` episodes.
 
@@ -199,7 +229,11 @@ def collect(
             triplet.seed_python()
             rng = np.random.default_rng(triplet.augmentation)
             samples, n_nodes, status = collect_episode(
-                env, rng, expert_probability, metadata=result.metadata
+                env,
+                rng,
+                expert_probability,
+                metadata=result.metadata,
+                expert=expert,
             )
             result.samples.extend(samples)
             result.n_episodes += 1

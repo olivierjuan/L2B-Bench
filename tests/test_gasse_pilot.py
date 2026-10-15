@@ -154,3 +154,69 @@ class TestPolicy:
         policy = method.policy()
         sample = collected.samples[0]
         assert policy.select_action(sample.observation, sample.action_set) in sample.action_set
+
+
+class TestRelpscostControlArm:
+    """R6.4: the same protocol and observation with the scalable expert's
+    labels — the gasse-relpscost fidelity profile's collection."""
+
+    @pytest.fixture(scope="class")
+    def relpscost_collected(self):
+        generator = SetCoverGenerator(
+            n_rows=150, n_cols=200, density=0.10, rng=np.random.default_rng(7)
+        )
+        return collect(
+            generator,
+            n_episodes=4,
+            seeds=[0, 1, 2, 3],
+            expert_probability=1.0,
+            time_limit=10.0,
+            expert="relpscost",
+        )
+
+    def test_samples_carry_relpscost_labels(self, relpscost_collected):
+        """Every recorded action is the relpscost argmax over its candidates
+        (finite on the candidates, −inf elsewhere in the vector)."""
+        from gyozas.experts import RelpscostExpert
+
+        expert = RelpscostExpert()
+        for sample in relpscost_collected.samples:
+            scores = sample.scores
+            # The vector spans the LP columns; candidates are finite, and
+            # the recorded action is their argmax.
+            assert np.isfinite(scores[sample.action_set]).all()
+            assert sample.action in set(sample.action_set.tolist())
+            assert scores[sample.action] == scores[sample.action_set].max()
+
+    def test_sample_shape_matches_the_gasse_protocol(self, relpscost_collected, collected):
+        """Same layout as the SB-labeled samples: the training path (collate
+        + process) consumes either without knowing the expert."""
+        sb = collected.samples[0]
+        rpc = relpscost_collected.samples[0]
+        assert type(rpc) is type(sb)
+        assert rpc.observation.row_features.shape[-1] == sb.observation.row_features.shape[-1]
+        assert rpc.observation.variable_features.shape[-1] == sb.observation.variable_features.shape[-1]
+
+    def test_unknown_expert_is_rejected(self):
+        generator = SetCoverGenerator(n_rows=60, n_cols=80, density=0.10, rng=np.random.default_rng(0))
+        with pytest.raises(ValueError, match="unknown expert"):
+            collect(
+                generator,
+                n_episodes=1,
+                seeds=[0],
+                expert_probability=1.0,
+                time_limit=10.0,
+                expert="oracle",
+            )
+
+    def test_method_wrapper_declares_the_control_profile(self, relpscost_collected, tmp_path):
+        from l2b_bench.methods.gasse.policy import gasse_relpscost_method
+
+        checkpoint = tmp_path / "gasse_rpc.pt"
+        save_checkpoint(GNNPolicy(), checkpoint, extra={})
+        method = gasse_relpscost_method(checkpoint)
+        assert method.name == "gasse-relpscost"
+        assert method.fidelity == "gasse-relpscost"
+        # The same policy contract as gasse — the trained GCNN.
+        policy = method.policy()
+        assert isinstance(policy, GassePolicy)

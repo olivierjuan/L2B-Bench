@@ -39,7 +39,7 @@ from l2b_bench.methods.cambranch.policy import cambranch_method
 from l2b_bench.methods.dsccl.policy import dsccl_method
 from l2b_bench.methods.fmsts.policy import fmsts_method
 from l2b_bench.methods.gasse.model import GNNPolicy
-from l2b_bench.methods.gasse.policy import gasse_method
+from l2b_bench.methods.gasse.policy import gasse_method, gasse_relpscost_method
 from l2b_bench.methods.gasse.train import (
     collate,
     get_device,
@@ -87,6 +87,15 @@ METHOD_SPECS = {
     "gasse": {
         "prob": 0.5,
         "method": gasse_method,
+        "cache_name": "expert_samples.pt",
+    },
+    # R6.4's control arm: Gasse's collection protocol and GCNN with the
+    # scalable expert swapped in (the gasse-relpscost fidelity profile). Run
+    # against gasse on the same strata, the SGM pair prices the cost of the
+    # switch from strong branching to the scalable expert.
+    "gasse-relpscost": {
+        "prob": 0.5,
+        "method": gasse_relpscost_method,
         "cache_name": "expert_samples.pt",
     },
     "lookback": {
@@ -363,7 +372,12 @@ def _collect_one_episode(job):
                     sampling_threshold=SORREL_SAMPLING_THRESHOLD,
                 )
             else:
-                samples, n_nodes, status = collect_episode(env, rng, probability)
+                samples, n_nodes, status = collect_episode(
+                    env,
+                    rng,
+                    probability,
+                    expert="relpscost" if kind == "gasse-relpscost" else "strong_branching",
+                )
         return samples, n_nodes, status
     finally:
         env.close()
