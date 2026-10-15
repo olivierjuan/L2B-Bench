@@ -35,6 +35,12 @@ Empirically pinned deviations (probes under this exact regime):
 - The token table is refreshed at node-selection decisions only (the open
   set is exposed there); at a branching decision the sequence is the one
   from the last node selection.
+- The paper's window (L_MAX) keeps the most recent tokens of the sequence;
+  here the node-token table and the action history are each windowed to the
+  L_MAX most recent entries (the open nodes are always retained). An
+  unbounded action history made the encoder's attention quadratic in the
+  episode length — the first full campaign OOM'd on a 13 GiB attention
+  tensor from a ~3,600-decision episode.
 - ``visited`` counts the node numbers this episode has already selected;
   ``fathomed`` / ``incumbent`` come from the dynamics' NODEINFEASIBLE /
   NODEFEASIBLE bookkeeping (a processed node whose LP was infeasible by
@@ -324,10 +330,14 @@ class EpisodeTracker:
         self._model = model
 
     def _snapshot(self) -> tuple[np.ndarray, np.ndarray]:
-        past = (
-            np.stack(self.history) if self.history else np.zeros((0, ACTION_TOKEN_DIM))
-        )
-        return past, np.array(self.history_kinds, dtype=np.int64)
+        # The paper's window keeps the L_MAX most recent tokens of the
+        # sequence — the most recent actions carry the episode's context.
+        # An unbounded history would make the encoder's attention quadratic
+        # in the episode length (a deep search → thousands of action tokens
+        # → the campaign OOM'd at a 13 GiB attention tensor).
+        recent = self.history[-L_MAX:]
+        past = np.stack(recent) if recent else np.zeros((0, ACTION_TOKEN_DIM))
+        return past, np.array(self.history_kinds[-L_MAX:], dtype=np.int64)
 
     def observe(self, env: Environment, decision: Decision) -> SeqBnBState:
         """Build the decision's state, refreshing whatever it exposes."""

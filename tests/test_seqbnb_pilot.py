@@ -117,6 +117,22 @@ class TestWindow:
         assert sorted(ids.tolist()) == [2, 5]
         assert tokens.shape == (2, NODE_TOKEN_DIM)
 
+    def test_history_snapshot_is_windowed(self):
+        """The action history is windowed like the token table — an
+        unbounded history made the campaign OOM (quadratic attention in the
+        episode length)."""
+        from l2b_bench.methods.seqbnb.collect import EpisodeTracker
+
+        tracker = EpisodeTracker()
+        tracker.history = [np.full(ACTION_TOKEN_DIM, i) for i in range(L_MAX + 10)]
+        tracker.history_kinds = list(range(L_MAX + 10))
+        past, kinds = tracker._snapshot()
+        assert past.shape == (L_MAX, ACTION_TOKEN_DIM)
+        assert kinds.shape == (L_MAX,)
+        assert past[0][0] == 10  # the oldest entries are the evicted ones
+        assert past[-1][0] == L_MAX + 9  # the most recent action is kept
+        assert kinds[0] == 10
+
 
 class TestCompatibilityOracle:
     def test_ancestor_bounds_accumulate_the_chain(self):
