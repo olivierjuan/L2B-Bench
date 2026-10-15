@@ -18,6 +18,13 @@ The paper's sample budget (10k expert samples, then 11 rounds of ~10k —
 ported method; the pilot runs a reduced budget. The per-round epoch count
 is not specified in the paper — one pass over the aggregated data per
 round (a pilot choice).
+
+The loop checkpoints after every round (the policy weights plus a
+sidecar state file holding the aggregated samples, the optimizer, and
+the RNG), so a campaign killed at its wall time resumes where it stopped
+— the same restartability contract as the other ports. A policy episode
+can run to the per-episode time limit, so a DAgger round costs up to
+``episodes_per_round * time_limit``; ten rounds do not fit every wall.
 """
 
 import random
@@ -105,6 +112,12 @@ def load_checkpoint(
     return model.to(device).eval()
 
 
+def _state_path(checkpoint: Path) -> Path:
+    """The sidecar holding the loop's resume state (the checkpoint keeps
+    the weights only, so the deployed policy loads a clean file)."""
+    return Path(str(checkpoint) + ".state")
+
+
 def train(
     instance_dir: Path,
     checkpoint: Path,
@@ -115,7 +128,8 @@ def train(
 ) -> dict[str, float]:
     """The DAgger loop: expert round 0, then the policy's own episodes.
 
-    Returns per-round summary counters (samples collected, mean loss)."""
+    Returns per-round summary counters (samples collected, mean loss).
+    Restarts from the per-round checkpoint pair when both files exist."""
     device = get_device()
     model = SeqBnBModel().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
@@ -123,10 +137,26 @@ def train(
     aggregated: list[SeqBnBSample] = []
     report: dict[str, float] = {}
     python_rng = random.Random(base_seed)
+    start_round = 0
+    seeds_used = 0
+    state_path = _state_path(checkpoint)
+    if checkpoint.exists() and state_path.exists():
+        state = torch.load(state_path, map_location="cpu", weights_only=False)
+        model.load_state_dict(state["state_dict"])
+        optimizer.load_state_dict(state["optimizer"])
+        aggregated = state["aggregated"]
+        report = state["report"]
+        python_rng.setstate(state["rng_state"])
+        start_round = state["rounds_done"]
+        seeds_used = state["seeds_used"]
+        print(
+            f"[train] resuming at round {start_round} "
+            f"({len(aggregated)} samples, {seeds_used} episodes)",
+            flush=True,
+        )
     print(f"[train] device: {device}", flush=True)
 
-    seeds_used = 0
-    for round_index in range(rounds + 1):
+    for round_index in range(start_round, rounds + 1):
         if round_index == 0:
             select_action = lambda s, d, e: e  # noqa: E731 — the expert round
         else:
@@ -151,7 +181,20 @@ def train(
             f"new_samples={len(result.samples)} total={len(aggregated)} loss={loss:.4f}",
             flush=True,
         )
-    save_checkpoint(model, checkpoint)
+        save_checkpoint(model, checkpoint)
+        torch.save(
+            {
+                "state_dict": model.cpu().state_dict(),
+                "rounds_done": round_index + 1,
+                "aggregated": aggregated,
+                "report": report,
+                "rng_state": python_rng.getstate(),
+                "optimizer": optimizer.state_dict(),
+                "seeds_used": seeds_used,
+            },
+            state_path,
+        )
+        model.to(device)
     print(
         f"[train] saved {checkpoint} ({len(aggregated)} samples, {seeds_used} episodes)",
         flush=True,

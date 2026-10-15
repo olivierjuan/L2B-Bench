@@ -478,6 +478,54 @@ class TestPolicyAndTraining:
         assert checkpoint.exists()
         assert isinstance(load_checkpoint(checkpoint), SeqBnBModel)
 
+    def test_train_resumes_from_the_per_round_checkpoint(self, tmp_path, capsys):
+        """A campaign killed at its wall time keeps what it learned: the
+        loop checkpoints after every round, and a restart runs only the
+        rounds still missing (a fully-done call is a no-op)."""
+        from l2b_bench.methods.seqbnb.train import train
+
+        _write_pool(tmp_path, 2, rows=120, cols=150)
+        checkpoint = tmp_path / "seqbnb.pt"
+        first = train(
+            tmp_path,
+            checkpoint,
+            rounds=1,
+            episodes_per_round=1,
+            base_seed=7,
+            time_limit=60.0,
+        )
+        assert checkpoint.exists() and checkpoint.with_name(
+            "seqbnb.pt.state"
+        ).exists()
+        assert set(first) == {"round_0", "round_1"}
+
+        capsys.readouterr()
+        second = train(
+            tmp_path,
+            checkpoint,
+            rounds=2,
+            episodes_per_round=1,
+            base_seed=7,
+            time_limit=60.0,
+        )
+        out = capsys.readouterr().out
+        assert "[train] resuming at round 2" in out
+        assert "[round  0]" not in out and "[round  1]" not in out
+        assert set(second) == {"round_0", "round_1", "round_2"}
+
+        capsys.readouterr()
+        third = train(
+            tmp_path,
+            checkpoint,
+            rounds=1,
+            episodes_per_round=1,
+            base_seed=7,
+            time_limit=60.0,
+        )
+        out = capsys.readouterr().out
+        assert "[round" not in out  # every requested round is already done
+        assert third == second
+
 
 def _tiny_model():
     from l2b_bench.methods.seqbnb.model import SeqBnBModel
