@@ -79,12 +79,15 @@ def get_device() -> "torch.device":
 
 
 def batches_of(
-    samples: list[SorrelSample], batch_size: int, rng: np.random.Generator, device: torch.device
+    samples: list[SorrelSample], batch_size: int, rng: np.random.Generator
 ) -> list[SorrelBatch]:
-    """Shuffled minibatches of the samples, collated and on the device."""
+    """Shuffled minibatches of the samples, collated on the CPU — the
+    updates move each batch to the device as they consume it. (Eagerly
+    moving the whole list OOM'd the campaign: one epoch's SIL buffer
+    does not fit the 22 GiB card.)"""
     order = rng.permutation(len(samples))
     return [
-        SorrelBatch([samples[i] for i in order[k : k + batch_size]]).to(device)
+        SorrelBatch([samples[i] for i in order[k : k + batch_size]])
         for k in range(0, len(order), batch_size)
     ]
 
@@ -119,8 +122,10 @@ class TD3BC:
     def prenorm(self, samples: list[SorrelSample], rng: np.random.Generator) -> int:
         """Actor-only PreNorm warmup over the subset; ``r_max`` is its max
         child reward (the official collects both over the prenorm loader)."""
-        batches = batches_of(samples, 2 * BATCH_SIZE, rng, self.device)
-        n_layers = _prenorm_warmup(self.actor, [batch.states for batch in batches])
+        batches = batches_of(samples, 2 * BATCH_SIZE, rng)
+        # The prenorm subset is small (every 10th sample) — eager is fine.
+        states = [batch.states.to(self.device) for batch in batches]
+        n_layers = _prenorm_warmup(self.actor, states)
         rewards = torch.tensor(
             [r for s in samples for r in (s.reward1, s.reward2)], dtype=torch.float32
         )
@@ -396,8 +401,9 @@ class PPOSIL:
         """returns/r_max - value, normalized over the whole rollout."""
         all_advantages = []
         for batch in batches:
-            value = self.critic_value(batch.states).detach()
-            all_advantages.append(batch.returns / self.r_max - value)
+            # One batch on the device at a time (see batches_of).
+            value = self.critic_value(batch.states.to(self.device)).detach()
+            all_advantages.append(batch.returns.to(self.device) / self.r_max - value)
         stacked = torch.cat(all_advantages)
         mean, std = stacked.mean(), stacked.std() + 1e-6
         return [(adv - mean) / std for adv in all_advantages]
@@ -412,6 +418,7 @@ class PPOSIL:
         critic_loss = 0.0
         actor_loss = 0.0
         for batch, adv in zip(batches, advantages, strict=True):
+            batch = batch.to(self.device)
             value = self.critic_value(batch.states)
             error = batch.returns / self.r_max - value
             loss = 0.5 * error.pow(2).sum() / n_samples
@@ -441,6 +448,7 @@ class PPOSIL:
         priorities = []
         self.actor.train()
         for batch in batches:
+            batch = batch.to(self.device)
             logits = padded_logits(self.actor(*batch.states.forward_args()), batch.states.candidates)
             # Not detached: the critic's gradient flows through the weight.
             value = self.critic_value(batch.states)
@@ -563,12 +571,12 @@ def train_online(
             samples = rollout(greedy=False)
             if not samples:
                 break
-            batches = batches_of(samples, BATCH_SIZE, rng, device)
+            batches = batches_of(samples, BATCH_SIZE, rng)
             stats = agent.ppo_update(batches)
             ppo_stats["critic_loss"] += stats["critic_loss"]
             ppo_stats["actor_loss"] += stats["actor_loss"]
             n_rollouts += 1
-        sil_batches = batches_of(buffer.dataset(rng), BATCH_SIZE, rng, device)
+        sil_batches = batches_of(buffer.dataset(rng), BATCH_SIZE, rng)
         if sil_batches:
             agent.sil_update(sil_batches)
         log(

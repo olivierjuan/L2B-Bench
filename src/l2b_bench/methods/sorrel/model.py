@@ -11,6 +11,8 @@ variable, no edges, one candidate — so a whole mini-batch collates into
 three disconnected bipartite graphs (state, child 1, child 2).
 """
 
+import copy
+
 import numpy as np
 import torch
 
@@ -72,12 +74,17 @@ class _GraphGroup:
         )
 
     def to(self, device: torch.device) -> "_GraphGroup":
-        self.constraint_features = self.constraint_features.to(device)
-        self.edge_index = self.edge_index.to(device)
-        self.edge_attr = self.edge_attr.to(device)
-        self.variable_features = self.variable_features.to(device)
-        self.candidates = [c.to(device) for c in self.candidates]
-        return self
+        """A moved copy — the original stays where it is. The training
+        loops keep CPU-resident batches and materialize one device batch
+        at a time; a mutating move would pin the whole list on the GPU
+        (the campaign OOM)."""
+        moved = copy.copy(self)
+        moved.constraint_features = self.constraint_features.to(device)
+        moved.edge_index = self.edge_index.to(device)
+        moved.edge_attr = self.edge_attr.to(device)
+        moved.variable_features = self.variable_features.to(device)
+        moved.candidates = [c.to(device) for c in self.candidates]
+        return moved
 
 
 class SorrelBatch:
@@ -120,17 +127,20 @@ class SorrelBatch:
         )
 
     def to(self, device: torch.device) -> "SorrelBatch":
-        self.states = self.states.to(device)
-        self.children1 = self.children1.to(device)
-        self.children2 = self.children2.to(device)
-        self.actions = self.actions.to(device)
-        self.rewards1 = self.rewards1.to(device)
-        self.rewards2 = self.rewards2.to(device)
-        self.dones1 = self.dones1.to(device)
-        self.dones2 = self.dones2.to(device)
-        self.returns = self.returns.to(device)
-        self.log_probs = self.log_probs.to(device)
-        return self
+        """A moved copy (see ``_GraphGroup.to``) — the original stays on the
+        CPU so a whole epoch's batches never sit on the GPU at once."""
+        moved = copy.copy(self)
+        moved.states = self.states.to(device)
+        moved.children1 = self.children1.to(device)
+        moved.children2 = self.children2.to(device)
+        moved.actions = self.actions.to(device)
+        moved.rewards1 = self.rewards1.to(device)
+        moved.rewards2 = self.rewards2.to(device)
+        moved.dones1 = self.dones1.to(device)
+        moved.dones2 = self.dones2.to(device)
+        moved.returns = self.returns.to(device)
+        moved.log_probs = self.log_probs.to(device)
+        return moved
 
 
 def padded_logits(logits: torch.Tensor, candidates: list[torch.Tensor]) -> torch.Tensor:

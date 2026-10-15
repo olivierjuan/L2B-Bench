@@ -291,6 +291,24 @@ class TestPPOSIL:
         assert (priorities[0] >= 0).all()
         assert priorities[0][0] > 0  # the high-return sample imitates itself
 
+    def test_batches_stay_on_the_cpu_until_consumed(self):
+        """Regression (campaign OOM): ``batches_of`` used to move every
+        batch to the device eagerly — one epoch's SIL buffer exhausted
+        the campaign card's 22 GiB. Batches are collated on the CPU, and
+        ``SorrelBatch.to`` returns a moved copy without pinning the
+        original (``compute_advantages`` iterating the batch list must
+        not leave the states behind on the device)."""
+        from l2b_bench.methods.sorrel.train import batches_of, get_device
+
+        samples = [_synthetic_sample(returns=1.0) for _ in range(5)]
+        batches = batches_of(samples, 2, np.random.default_rng(0))
+        for batch in batches:
+            assert batch.states.constraint_features.device.type == "cpu"
+        moved = batches[0].to(get_device())
+        assert moved is not batches[0]
+        assert batches[0].states.constraint_features.device.type == "cpu"
+        assert moved.states.constraint_features.device == get_device()
+
     def test_sil_buffer_keeps_the_best_trajectory(self):
         buffer = SILBuffer()
         rng = np.random.default_rng(0)
