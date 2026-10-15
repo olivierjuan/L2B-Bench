@@ -1,9 +1,10 @@
-"""RetroBranching (Parsonson & Deisenroth 2022) — retrospective RL branching.
+"""RetroBranching (Parsonson, Laterza & Barrett 2022) — retrospective RL branching.
 
-Paper: "Boosting tree search strategies for MIPs via retrospective
-reinforcement learning" (AAAI 2022), Charlie Parsonson, Michael C. W.
-Deisenroth. Official implementation: github.com/ds4dm/retro_branching
-(verified; see GYOZAS docs/references.md).
+Paper: "Reinforcement Learning for Branch-and-Bound Optimisation using
+Retrospective Trajectories" (arXiv 2205.14345, AAAI 2023), Charlie
+Parsonson, Alexandre Laterza, Thomas D. Barrett. Official implementation:
+github.com/cwfparsonson/retro_branching (verified; see GYOZAS
+docs/references.md).
 
 Fidelity profile ``retrobranching``: the ``NodeBipartiteRetro`` observation
 (19 bipartite-LP + 24 retro variable features) under the paper's

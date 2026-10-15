@@ -1,4 +1,4 @@
-"""End-to-end tests of the RetroBranching (Parsonson & Deisenroth 2022) port.
+"""End-to-end tests of the RetroBranching (Parsonson, Laterza & Barrett 2022) port.
 
 The instances are tiny set covers — the point is that the protocol runs on
 the harness (retro observation → DQN agent in the environment → sub-tree

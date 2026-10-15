@@ -1,4 +1,4 @@
-"""RetroBranching (Parsonson & Deisenroth 2022) — the DQN training loop.
+"""RetroBranching (Parsonson, Laterza & Barrett 2022) — the DQN training loop.
 
 Faithful port of the official ``experiments/dqn_trainer.py`` driving
 ``src/learners/dqn_learner.py`` under the ``retro.yaml`` /

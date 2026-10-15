@@ -14,6 +14,29 @@ harness must not: the frozen protocol (G2), the strate data and their signed
 manifests, the method implementations and their training, the experiment
 grids, and the results.
 
+## Papers & official repositories
+
+Every method ported in `src/l2b_bench/methods/`, with its paper and the
+implementation it was ported from (references verified October 2026).
+
+| Method | Paper | Venue | Ported from |
+|---|---|---|---|
+| `gasse` | Gasse, Chételat, Ferroni, Ferron, Létourneau-Pinto, Lodi — *Exact Combinatorial Optimization with Graph Convolutional Neural Networks* ([arXiv 1906.01629](https://arxiv.org/abs/1906.01629)) | NeurIPS 2019 | [ds4dm/learn2branch-ecole](https://github.com/ds4dm/learn2branch-ecole) |
+| `treegate` | Zarpellon, Jo, Lodi, Bengio — *Parameterizing Branch-and-Bound Search Trees to Learn Branching Policies* ([arXiv 2002.05120](https://arxiv.org/abs/2002.05120)) | AAAI 2021 | [ds4dm/branch-search-trees](https://github.com/ds4dm/branch-search-trees) |
+| `tbrant` | Lin et al. — *Learning to Branch with Tree-aware Branching Transformers* ([doi 10.1016/j.knosys.2022.109455](https://doi.org/10.1016/j.knosys.2022.109455)) | KBS 2022 | [linjc16/TBranT](https://github.com/linjc16/TBranT) |
+| `lookback` | Gupta, Khalil, Chételat, Gasse, Bengio, Lodi, Kumar — *Lookback for learning to branch* ([arXiv 2206.14987](https://arxiv.org/abs/2206.14987)) | TMLR 2022 | [pg2455/lookback-learn2branch](https://github.com/pg2455/lookback-learn2branch) |
+| `retrobranching` | Parsonson, Laterza, Barrett — *Reinforcement Learning for Branch-and-Bound Optimisation using Retrospective Trajectories* ([arXiv 2205.14345](https://arxiv.org/abs/2205.14345)) | AAAI 2023 | [cwfparsonson/retro_branching](https://github.com/cwfparsonson/retro_branching) |
+| `scavuzzo` | Scavuzzo, Chen, Chételat, Gasse, Lodi, Yorke-Smith, Aardal — *Learning to branch with Tree MDPs* ([arXiv 2205.11107](https://arxiv.org/abs/2205.11107)) | AAAI 2022 | [lascavana/rl2branch](https://github.com/lascavana/rl2branch) |
+| `cambranch` | Lin, Xiu, You, Chen, Cai — *Contrastive Learning with Augmented MILPs for Learning to Branch* | ICLR 2024 | paper-only port (no official repository) |
+| `fmsts` | Etheve, Alès, Bissuel, Juan, Kedad-Sidhoum — *Reinforcement Learning for Variable Selection in a Branch and Bound Algorithm* ([arXiv 2005.10026](https://arxiv.org/abs/2005.10026)) | 2020 | paper-only port |
+| `sorrel` | Feng, Yang — *SORREL: Suboptimal-Demonstration-Guided Reinforcement Learning for Learning to Branch* ([arXiv 2412.15534](https://arxiv.org/abs/2412.15534)) | AAAI 2025 | [Shengyu-Feng/SORREL](https://github.com/Shengyu-Feng/SORREL) |
+| `tgppo` | *Tree-Gate PPO* ([arXiv 2511.12986](https://arxiv.org/abs/2511.12986)) | AAAI 2026 | [benmhamed-a/tgppo-aaai-26](https://github.com/benmhamed-a/tgppo-aaai-26) |
+| `dsccl` | Lu, Ma, Tao — *Dynamic Stratified Contrastive Learning with Upstream Augmentation for MILP Branching* ([arXiv 2511.21107](https://arxiv.org/abs/2511.21107)) | preprint 2025 | paper-only port |
+| `mamba` | Mamba-Branching | 2026 | [doctor-watson626/Mamba-Branching](https://github.com/doctor-watson626/Mamba-Branching) (the repo is the reference — no paper citation recorded there) |
+| `bbmdp` | Forel et al. — *A Markov decision process for variable selection in branch & bound* | NeurIPS 2025 | [abfariah/bbmdp](https://github.com/abfariah/bbmdp) |
+| `seqbnb` | Liu, Liu, Yan, Shi, Zhao — *Seq-BnB: Sequence Model for Branch-and-Bound Node Selection and Branching* ([arXiv 2610.14835](https://arxiv.org/abs/2610.14835)) | 2026 | paper-only port (code promised upon publication) |
+| `gasse-relpscost` | control arm of the benchmark, not a published method: Gasse's protocol with the scalable expert (see the pilot results) | — | — |
+
 ## Layout
 
 ```

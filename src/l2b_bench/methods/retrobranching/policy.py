@@ -1,4 +1,4 @@
-"""RetroBranching (Parsonson & Deisenroth 2022) — the trained DQN as a gyozas policy.
+"""RetroBranching (Parsonson, Laterza & Barrett 2022) — the trained DQN as a gyozas policy.
 
 The bridge between the method and the harness: the same ``select_action``
 contract every policy exposes (R1.1), consuming the ``NodeBipartiteRetro``
@@ -57,6 +57,6 @@ def retrobranching_method(checkpoint: str | Path) -> Method:
     return Method(
         name="retrobranching",
         policy=lambda: RetroPolicy.from_checkpoint(checkpoint),
-        config={"checkpoint": str(checkpoint), "architecture": "BipartiteGCN DQN (Parsonson & Deisenroth, 2022)"},
+        config={"checkpoint": str(checkpoint), "architecture": "BipartiteGCN DQN (Parsonson et al., 2022)"},
         fidelity="retrobranching",
     )

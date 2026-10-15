@@ -1,8 +1,8 @@
-"""RetroBranching (Parsonson & Deisenroth 2022) — the DQN value network.
+"""RetroBranching (Parsonson, Laterza & Barrett 2022) — the DQN value network.
 
 Faithful port of ``src/networks/bipartite_gcn.py`` and
 ``bipartite_graph_convolution.py`` from the official repository
-(github.com/ds4dm/retro_branching), with the ``dqn_value_network.yaml``
+(github.com/cwfparsonson/retro_branching), with the ``dqn_value_network.yaml``
 configuration baked in: 64-dim embeddings, one message-passing round, add
 aggregation, edge features included, one head of depth 2, and the
 ``inverse_leaky_relu`` output activation (a LeakyReLU whose output is then

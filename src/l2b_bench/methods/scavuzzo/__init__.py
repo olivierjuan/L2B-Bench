@@ -1,9 +1,9 @@
 """Scavuzzo et al. 2022 — RL fine-tuning of an IL-pretrained branching policy.
 
-Paper: "Learning to Branch with Tree MDPs" (AAAI 2022), Gabriele Scavuzzo,
-Alessandro Zacchia, Thiago Serra, Kevin Leyton-Brown. Official
-implementation: github.com/lascavana/rl2branch (verified; see GYOZAS
-docs/references.md).
+Paper: "Learning to Branch with Tree MDPs" (arXiv 2205.11107, AAAI 2022),
+Lara Scavuzzo, Feng Yang Chen, Didier Chételat, Maxime Gasse, Andrea Lodi,
+Neil Yorke-Smith, Karen Aardal. Official implementation:
+github.com/lascavana/rl2branch (verified; see GYOZAS docs/references.md).
 
 Fidelity profile ``scavuzzo``: Gasse's ``NodeBipartite`` observation and
 GNNPolicy, first imitation-learned exactly like gasse (expert_probability
