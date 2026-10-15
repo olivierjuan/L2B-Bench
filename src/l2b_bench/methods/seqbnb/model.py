@@ -87,7 +87,9 @@ def sample_to_tensors(sample: SeqBnBSample) -> dict[str, object]:
         action_ids = np.asarray(sample.open_ids)
     else:  # branching: label ranks the LP candidates
         action_ids = np.asarray(sample.candidates)
-    label = int(np.where(action_ids == sample.expert_action)[0][0])
+    # Unlabeled samples (a deployed policy's inputs) carry no rank.
+    matches = np.where(action_ids == sample.expert_action)[0]
+    label = int(matches[0]) if len(matches) else 0
     open_positions = None
     candidate_rows = None
     if sample.open_ids is not None:
@@ -183,6 +185,31 @@ def collate(samples: list[SeqBnBSample]) -> SeqBnBBatch:
         ],
         labels=torch.tensor([t["label"] for t in tensors], dtype=torch.long),
         kinds=torch.tensor([t["kind"] for t in tensors], dtype=torch.long),
+    )
+
+
+def to_device(batch: SeqBnBBatch, device: torch.device) -> SeqBnBBatch:
+    """A copy of the batch with every tensor on ``device``."""
+    return SeqBnBBatch(
+        constraint_features=batch.constraint_features.to(device),
+        edge_index=batch.edge_index.to(device),
+        edge_attr=batch.edge_attr.to(device),
+        variable_features=batch.variable_features.to(device),
+        var_offsets=batch.var_offsets.to(device),
+        graph_rows=[rows.to(device) for rows in batch.graph_rows],
+        tokens=batch.tokens.to(device),
+        token_mask=batch.token_mask.to(device),
+        history=batch.history.to(device),
+        history_mask=batch.history_mask.to(device),
+        history_kinds=batch.history_kinds.to(device),
+        open_positions=[
+            p.to(device) if p is not None else None for p in batch.open_positions
+        ],
+        candidate_rows=[
+            c.to(device) if c is not None else None for c in batch.candidate_rows
+        ],
+        labels=batch.labels.to(device),
+        kinds=batch.kinds.to(device),
     )
 
 

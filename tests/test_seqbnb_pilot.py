@@ -349,3 +349,115 @@ class TestSeqBnBModel:
             p.grad for p in model.parameters() if p.requires_grad and p.grad is not None
         ]
         assert gradients and any(float(g.abs().sum()) > 0 for g in gradients)
+
+
+class TestPolicyAndTraining:
+    def _policy_episode(self, tmp_path, model=None):
+        """Env + a policy acting greedily over the joint regime (the
+        benchmark's own path: attach + select_action on Decision objects)."""
+        from l2b_bench.methods.seqbnb.policy import SeqBnBPolicy
+
+        _write_pool(tmp_path, 2, rows=200, cols=250)
+        generator = PoolGenerator(tmp_path, rng=np.random.default_rng(0))
+        env = make_env(generator)
+        policy = (
+            SeqBnBPolicy(model) if model is not None else SeqBnBPolicy(_tiny_model())
+        )
+        policy.attach(env)
+        return env, policy
+
+    def test_policy_runs_a_joint_episode_end_to_end(self, tmp_path):
+        env, policy = self._policy_episode(tmp_path)
+        try:
+            _obs, decision, _reward, done, _info = env.reset()
+            kinds = []
+            steps = 0
+            while not done and steps < 50:
+                assert decision is not None
+                kinds.append(decision.kind)
+                action = policy.select_action(None, decision)
+                _obs, decision, _reward, done, _info = env.step(action)
+                steps += 1
+            assert steps == 50 or done
+            assert DecisionKind.NODE_SELECTION in kinds
+        finally:
+            env.close()
+
+    def test_joint_loss_matches_the_papers_form(self):
+        """L = L_branch + 0.1 * L_ns, each a mean CE over its kind."""
+        import torch
+
+        from l2b_bench.methods.seqbnb.model import SeqBnBModel
+        from l2b_bench.methods.seqbnb.train import LAMBDA_NS, joint_loss
+
+        # Zero logits give a uniform distribution: CE = log(n_actions) per
+        # sample, so the joint loss is exactly L_br + lambda * L_ns.
+        device = torch.device("cpu")
+
+        class _Stub(SeqBnBModel):
+            def forward(self, batch):
+                return [
+                    torch.zeros(len(batch.open_positions[i]))
+                    if int(batch.kinds[i]) == 0
+                    else torch.zeros(len(batch.candidate_rows[i]))
+                    for i in range(batch.kinds.shape[0])
+                ]
+
+        stub = _Stub()
+        samples = [
+            _synthetic_sample(DecisionKind.NODE_SELECTION),
+            _synthetic_sample(DecisionKind.BRANCHING),
+        ]
+        # Zero logits give CE = log(n_actions) for both — check the weights.
+        loss = joint_loss(stub, samples, device)
+        ns_loss = torch.log(torch.tensor(float(3)))  # 3 open nodes
+        br_loss = torch.log(torch.tensor(float(4)))  # 4 candidates
+        torch.testing.assert_close(loss, br_loss + LAMBDA_NS * ns_loss)
+
+    def test_dagger_train_runs_and_saves(self, tmp_path):
+        from l2b_bench.methods.seqbnb.model import SeqBnBModel
+        from l2b_bench.methods.seqbnb.train import load_checkpoint, train
+
+        _write_pool(tmp_path, 2, rows=120, cols=150)
+        checkpoint = tmp_path / "seqbnb.pt"
+        report = train(
+            tmp_path,
+            checkpoint,
+            rounds=1,
+            episodes_per_round=1,
+            base_seed=7,
+            time_limit=60.0,
+        )
+        assert "round_0" in report and "round_1" in report
+        assert checkpoint.exists()
+        assert isinstance(load_checkpoint(checkpoint), SeqBnBModel)
+
+
+def _tiny_model():
+    from l2b_bench.methods.seqbnb.model import SeqBnBModel
+
+    model = SeqBnBModel()
+    model.eval()
+    return model
+
+
+def _synthetic_sample(kind):
+    """A minimal handcrafted sample (3 open nodes or 4 candidates)."""
+    from l2b_bench.methods.seqbnb.collect import ACTION_TOKEN_DIM, SeqBnBSample
+
+    n = 3 if kind == DecisionKind.NODE_SELECTION else 4
+    return SeqBnBSample(
+        kind=kind,
+        tokens=np.zeros((n, 8)),
+        token_ids=np.arange(1, n + 1),
+        open_ids=np.arange(1, n + 1) if kind == DecisionKind.NODE_SELECTION else None,
+        candidates=None if kind == DecisionKind.NODE_SELECTION else np.arange(n),
+        history=np.zeros((0, ACTION_TOKEN_DIM)),
+        history_kinds=np.zeros((0,), dtype=np.int64),
+        action=-1,
+        expert_action=1 if kind == DecisionKind.NODE_SELECTION else 2,
+        t=0,
+        n_open=n,
+        gap=0.0,
+        graph=None,
+    )

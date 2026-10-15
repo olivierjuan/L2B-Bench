@@ -30,13 +30,14 @@ import json
 from pathlib import Path
 
 import numpy as np
-
 from gyozas.metrics import paired_per_instance_ratios, sgm_of_ratios
 from gyozas.runner import Cell, ExperimentConfig, Method, Runner
 
 from l2b_bench.methods.baselines import BASELINE_METHODS
+from l2b_bench.methods.bbmdp.policy import bbmdp_method
 from l2b_bench.methods.cambranch.policy import cambranch_method
 from l2b_bench.methods.dsccl.policy import dsccl_method
+from l2b_bench.methods.fmsts.policy import fmsts_method
 from l2b_bench.methods.gasse.model import GNNPolicy
 from l2b_bench.methods.gasse.policy import gasse_method
 from l2b_bench.methods.gasse.train import (
@@ -47,7 +48,9 @@ from l2b_bench.methods.gasse.train import (
     save_checkpoint,
     to_device,
 )
-from l2b_bench.methods.lookback.collect import collect_episode as lookback_collect_episode
+from l2b_bench.methods.lookback.collect import (
+    collect_episode as lookback_collect_episode,
+)
 from l2b_bench.methods.lookback.policy import lookback_method
 from l2b_bench.methods.lookback.train import (
     LookbackBatch,
@@ -58,13 +61,14 @@ from l2b_bench.methods.lookback.train import (
 from l2b_bench.methods.mamba.collect import (
     MAMBA_K,
     MAMBA_S,
+)
+from l2b_bench.methods.mamba.collect import (
     collect_episode as mamba_collect_episode,
 )
-from l2b_bench.methods.bbmdp.policy import bbmdp_method
-from l2b_bench.methods.fmsts.policy import fmsts_method
 from l2b_bench.methods.mamba.policy import mamba_method
 from l2b_bench.methods.retrobranching.policy import retrobranching_method
 from l2b_bench.methods.scavuzzo.policy import scavuzzo_method
+from l2b_bench.methods.seqbnb.policy import seqbnb_method
 from l2b_bench.methods.sorrel.policy import sorrel_method
 from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
 from l2b_bench.methods.tbrant.policy import tbrant_method
@@ -72,6 +76,8 @@ from l2b_bench.methods.tgppo.policy import tgppo_method
 from l2b_bench.methods.treegate.collect import (
     TREEGATE_K,
     TREEGATE_S,
+)
+from l2b_bench.methods.treegate.collect import (
     collect_episode as treegate_collect_episode,
 )
 from l2b_bench.methods.treegate.policy import treegate_method
@@ -192,16 +198,26 @@ METHOD_SPECS = {
         "method": fmsts_method,
         "cache_name": None,
     },
+    # Seq-BnB is the joint regime: one policy for branching AND node
+    # selection, DAgger-trained (expert round, then its own episodes with
+    # expert labels). The pool lives on disk — the node-selection oracle
+    # needs each training instance's offline reference optimum x*.
+    "seqbnb": {
+        "prob": None,
+        "method": seqbnb_method,
+        "cache_name": None,
+    },
 }
 
 # SORREL's episode filter, scaled to the pilot's instances: the official
 # threshold (100 decisions) would drop every pilot episode outright.
 SORREL_SAMPLING_THRESHOLD = 10
 
+
 def parse_family(text: str) -> dict:
     """``"500x1000x0.05"`` → ``dict(n_rows=500, n_cols=1000, density=0.05)``."""
     rows, cols, density = text.split("x")
-    return dict(n_rows=int(rows), n_cols=int(cols), density=float(density))
+    return {"n_rows": int(rows), "n_cols": int(cols), "density": float(density)}
 
 
 # The pilot's defaults — the paper's set covers, scaled down so a CPU run
@@ -210,9 +226,9 @@ def parse_family(text: str) -> dict:
 # the training one (default solver: ~600 B&B nodes per instance) so the node
 # counts are not degenerate. Both families are CLI-overridable for the
 # cluster campaigns.
-TRAIN_FAMILY = dict(n_rows=200, n_cols=250, density=0.10)
+TRAIN_FAMILY = {"n_rows": 200, "n_cols": 250, "density": 0.10}
 TRAIN_RNG_SEED = 123
-EVAL_FAMILY = dict(n_rows=500, n_cols=600, density=0.10)
+EVAL_FAMILY = {"n_rows": 500, "n_cols": 600, "density": 0.10}
 EVAL_RNG_SEED = 2024
 N_EVAL_INSTANCES = 6
 
@@ -230,10 +246,14 @@ def write_eval_instances(strate_root: Path, eval_family: dict) -> None:
 
     split = strate_root / "test"
     split.mkdir(parents=True, exist_ok=True)
-    generator = SetCoverGenerator(rng=np.random.default_rng(EVAL_RNG_SEED), **eval_family)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(EVAL_RNG_SEED), **eval_family
+    )
     for i in range(N_EVAL_INSTANCES):
         model = next(generator)
-        model.writeProblem(filename=str(split / f"sc_{i:02d}.mps"), genericnames=True, verbose=False)
+        model.writeProblem(
+            filename=str(split / f"sc_{i:02d}.mps"), genericnames=True, verbose=False
+        )
     print(f"[instances] wrote {N_EVAL_INSTANCES} set covers to {split}")
 
 
@@ -273,7 +293,9 @@ def _collect_one_episode(job):
     scip_params["limits/time"] = time_limit
     scip_params["display/verblevel"] = 0
     observation = (
-        BranchingStateObservation() if kind in ("tbrant", "treegate", "mamba") else NodeBipartite()
+        BranchingStateObservation()
+        if kind in ("tbrant", "treegate", "mamba")
+        else NodeBipartite()
     )
     if kind == "sorrel":
         dynamics = BranchingDynamics(pseudo_candidates=True)
@@ -295,7 +317,10 @@ def _collect_one_episode(job):
         )
     env = Environment(
         instance_generator=FileGenerator(
-            directory=path.parent, pattern=path.name, sampling_mode="replace", rng=np.random.default_rng(0)
+            directory=path.parent,
+            pattern=path.name,
+            sampling_mode="replace",
+            rng=np.random.default_rng(0),
         ),
         observation_function=observation,
         information_function=SolveStatus(),
@@ -319,10 +344,14 @@ def _collect_one_episode(job):
         else:
             rng = np.random.default_rng(triplet.augmentation)
             if kind == "lookback":
-                samples, n_nodes, status = lookback_collect_episode(env, rng, probability)
+                samples, n_nodes, status = lookback_collect_episode(
+                    env, rng, probability
+                )
             elif kind == "sorrel":
                 from l2b_bench.methods.sorrel.collect import (
                     LENGTH_LIMIT,
+                )
+                from l2b_bench.methods.sorrel.collect import (
                     collect_episode as sorrel_collect_episode,
                 )
 
@@ -360,7 +389,10 @@ def collect_expert_data(
 
     if cache is not None and cache.exists():
         samples = torch.load(cache, weights_only=False)
-        print(f"[collect] reusing the cached collection from {cache} ({len(samples)} entries)", flush=True)
+        print(
+            f"[collect] reusing the cached collection from {cache} ({len(samples)} entries)",
+            flush=True,
+        )
         return samples
 
     from gyozas.instances import SetCoverGenerator
@@ -370,15 +402,22 @@ def collect_expert_data(
     instance_dir = instance_dir or Path("train_instances")
     instance_dir.mkdir(parents=True, exist_ok=True)
     paths = []
-    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
     for i in range(n_episodes):
         path = instance_dir / f"train_{i:03d}.mps"
         if not path.exists():
-            next(generator).writeProblem(filename=str(path), genericnames=True, verbose=False)
+            next(generator).writeProblem(
+                filename=str(path), genericnames=True, verbose=False
+            )
         paths.append(path)
     print(f"[collect] {n_episodes} training instances in {instance_dir}", flush=True)
 
-    jobs = [(path, i, kind, METHOD_SPECS[kind]["prob"], time_limit) for i, path in enumerate(paths)]
+    jobs = [
+        (path, i, kind, METHOD_SPECS[kind]["prob"], time_limit)
+        for i, path in enumerate(paths)
+    ]
     # Mamba trains on trajectories: each episode's samples stay grouped (the
     # decision order is its path model's input); every other method flattens.
     keep_trajectories = kind == "mamba"
@@ -398,7 +437,10 @@ def collect_expert_data(
             _absorb(samples)
             statuses.append(status)
             n_nodes_total += n_nodes
-            print(f"[collect] episode {done}/{n_episodes}: {status}, {n_nodes} nodes", flush=True)
+            print(
+                f"[collect] episode {done}/{n_episodes}: {status}, {n_nodes} nodes",
+                flush=True,
+            )
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -409,10 +451,17 @@ def collect_expert_data(
                 _absorb(samples)
                 statuses.append(status)
                 n_nodes_total += n_nodes
-                print(f"[collect] episode {done}/{n_episodes}: {status}, {n_nodes} nodes", flush=True)
+                print(
+                    f"[collect] episode {done}/{n_episodes}: {status}, {n_nodes} nodes",
+                    flush=True,
+                )
 
     solved = sum(1 for s in statuses if s == "optimal")
-    n_decisions = sum(len(episode) for episode in all_samples) if keep_trajectories else len(all_samples)
+    n_decisions = (
+        sum(len(episode) for episode in all_samples)
+        if keep_trajectories
+        else len(all_samples)
+    )
     print(
         f"[collect] {n_episodes} episodes ({solved} optimal), "
         f"{n_nodes_total} nodes, {len(all_samples)} "
@@ -446,7 +495,9 @@ def train_retrobranching(
     from l2b_bench.methods.retrobranching import train
     from l2b_bench.methods.retrobranching.train import BUFFER_MIN_LENGTH
 
-    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
     train(
         (next(generator) for _ in range(episodes)),
         checkpoint,
@@ -477,7 +528,9 @@ def train_scavuzzo(
 
     from l2b_bench.methods.scavuzzo.train import train as train_rl
 
-    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
     train_rl(
         (next(generator) for _ in range(episodes)),
         il_checkpoint,
@@ -507,7 +560,9 @@ def train_tgppo(
 
     from l2b_bench.methods.tgppo.train import train
 
-    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
     train(
         (next(generator) for _ in range(episodes)),
         checkpoint,
@@ -551,7 +606,9 @@ def train_sorrel(
             seed=0,
         )
 
-    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
     train_online(
         (next(generator) for _ in range(episodes)),
         td3bc_checkpoint,
@@ -584,7 +641,9 @@ def train_bbmdp(
 
     from l2b_bench.methods.bbmdp.train import train
 
-    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
     train(
         generator,  # fresh instances forever; the episode budget stops the loop
         checkpoint,
@@ -620,11 +679,15 @@ def train_fmsts(
 
     instance_dir = checkpoint.parent / "fmsts_train_instances"
     instance_dir.mkdir(parents=True, exist_ok=True)
-    generator = SetCoverGenerator(rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
     for i in range(episodes):
         path = instance_dir / f"train_{i:03d}.mps"
         if not path.exists():
-            next(generator).writeProblem(filename=str(path), genericnames=True, verbose=False)
+            next(generator).writeProblem(
+                filename=str(path), genericnames=True, verbose=False
+            )
     print(f"[train] {episodes} pool instances in {instance_dir}", flush=True)
     train(
         instance_dir,
@@ -636,7 +699,49 @@ def train_fmsts(
     )
 
 
-def train_mamba(trajectories: list, epochs: int, checkpoint: Path, train_family: dict) -> None:
+def train_seqbnb(
+    episodes: int,
+    checkpoint: Path,
+    train_family: dict,
+    epochs: int,
+    time_limit: float = 60.0,
+) -> None:
+    """The paper's DAgger over the joint regime: expert round 0, then the
+    policy's own episodes with the expert's labels.
+
+    ``--episodes`` sizes the on-disk pool (each instance's reference optimum
+    x* is solved offline once, then cached) and the episodes per round;
+    ``--epochs`` scales the DAgger round count (the paper: 10k expert
+    samples, then 11 rounds of ~10k — 120k decisions in total).
+    """
+    from gyozas.instances import SetCoverGenerator
+
+    from l2b_bench.methods.seqbnb.train import train
+
+    instance_dir = checkpoint.parent / "seqbnb_train_instances"
+    instance_dir.mkdir(parents=True, exist_ok=True)
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
+    for i in range(episodes):
+        path = instance_dir / f"train_{i:03d}.mps"
+        if not path.exists():
+            next(generator).writeProblem(
+                filename=str(path), genericnames=True, verbose=False
+            )
+    print(f"[train] {episodes} pool instances in {instance_dir}", flush=True)
+    train(
+        instance_dir,
+        checkpoint,
+        rounds=max(1, epochs),
+        episodes_per_round=episodes,
+        time_limit=time_limit,
+    )
+
+
+def train_mamba(
+    trajectories: list, epochs: int, checkpoint: Path, train_family: dict
+) -> None:
     """The official two-stage IL: contrastive pretraining, then the Mamba.
 
     ``epochs`` drives both stages (the paper runs 50 each); the trajectories
@@ -647,7 +752,13 @@ def train_mamba(trajectories: list, epochs: int, checkpoint: Path, train_family:
     train(trajectories, checkpoint, epochs=epochs, clip_epochs=epochs)
 
 
-def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dict, kind: str = "gasse") -> None:
+def train_policy(
+    samples: list,
+    epochs: int,
+    checkpoint: Path,
+    train_family: dict,
+    kind: str = "gasse",
+) -> None:
     """The official imitation-learning loop: pretrain, then epochs of Adam.
 
     The loss is the selected method's: Gasse's candidate cross-entropy,
@@ -666,9 +777,13 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
             LR_DECAY_EPOCHS,
             LR_DECAY_FACTOR,
             WEIGHT_DECAY,
-            process as process_treegate,
             sample_to_device,
             sample_to_tensors,
+        )
+        from l2b_bench.methods.treegate.train import (
+            process as process_treegate,
+        )
+        from l2b_bench.methods.treegate.train import (
             save_checkpoint as save_treegate_checkpoint,
         )
 
@@ -680,7 +795,10 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
             # of per-node tensor dicts.
             order = shuffle.permutation(len(samples))
             return [
-                [sample_to_device(sample_to_tensors(samples[i]), device) for i in order[k : k + batch_size]]
+                [
+                    sample_to_device(sample_to_tensors(samples[i]), device)
+                    for i in order[k : k + batch_size]
+                ]
                 for k in range(0, len(order), batch_size)
             ]
 
@@ -688,19 +806,30 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         print(f"[train] device: {device}")
         model = model.to(device)
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, LR_DECAY_EPOCHS, LR_DECAY_FACTOR)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY
+        )
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, LR_DECAY_EPOCHS, LR_DECAY_FACTOR
+        )
         for epoch in range(1, epochs + 1):
             stats = process_treegate(model, batches(device), optimizer=optimizer)
             scheduler.step()
-            kacc = " ".join(f"acc@{k}={a:.2f}" for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True))
+            kacc = " ".join(
+                f"acc@{k}={a:.2f}"
+                for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True)
+            )
             print(f"[train] epoch {epoch:3d}  loss={stats['loss']:.4f}  {kacc}")
 
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         save_treegate_checkpoint(
             model.cpu(),
             checkpoint,
-            extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
+            extra={
+                "n_samples": len(samples),
+                "epochs": epochs,
+                "train_family": train_family,
+            },
         )
         print(f"[train] checkpoint saved to {checkpoint}")
         return
@@ -712,8 +841,14 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
             WARMUP_EPOCHS,
             NoamLR,
             collate_stats,
+        )
+        from l2b_bench.methods.tbrant.train import (
             process as process_tbrant,
+        )
+        from l2b_bench.methods.tbrant.train import (
             save_checkpoint as save_tbrant_checkpoint,
+        )
+        from l2b_bench.methods.tbrant.train import (
             to_device as stats_to_device,
         )
 
@@ -723,7 +858,10 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         def batches(device):
             order = shuffle.permutation(len(samples))
             return [
-                stats_to_device(collate_stats([samples[i] for i in order[k : k + batch_size]]), device)
+                stats_to_device(
+                    collate_stats([samples[i] for i in order[k : k + batch_size]]),
+                    device,
+                )
                 for k in range(0, len(order), batch_size)
             ]
 
@@ -736,14 +874,21 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         for epoch in range(1, epochs + 1):
             stats = process_tbrant(model, batches(device), optimizer=optimizer)
             scheduler.step()
-            kacc = " ".join(f"acc@{k}={a:.2f}" for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True))
+            kacc = " ".join(
+                f"acc@{k}={a:.2f}"
+                for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True)
+            )
             print(f"[train] epoch {epoch:3d}  loss={stats['loss']:.4f}  {kacc}")
 
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         save_tbrant_checkpoint(
             model.cpu(),
             checkpoint,
-            extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
+            extra={
+                "n_samples": len(samples),
+                "epochs": epochs,
+                "train_family": train_family,
+            },
         )
         print(f"[train] checkpoint saved to {checkpoint}")
         return
@@ -755,14 +900,20 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         # The paper's data budget: 10% of the strong-branching samples — the
         # 90k AMILPs are free by feature transformation (Thm 3.1).
         kept = subsample_budget(samples)
-        print(f"[train] cambranch: {len(kept)} of {len(samples)} samples (the paper's 10% budget)")
+        print(
+            f"[train] cambranch: {len(kept)} of {len(samples)} samples (the paper's 10% budget)"
+        )
         checkpoint.parent.mkdir(parents=True, exist_ok=True)
         train_cambranch(
             kept,
             checkpoint,
             epochs=epochs,
             pairs_per_batch=PAIRS_PER_BATCH,
-            extra={"n_samples": len(kept), "epochs": epochs, "train_family": train_family},
+            extra={
+                "n_samples": len(kept),
+                "epochs": epochs,
+                "train_family": train_family,
+            },
         )
         return
 
@@ -776,7 +927,11 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
             samples,
             checkpoint,
             epochs=epochs,
-            extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
+            extra={
+                "n_samples": len(samples),
+                "epochs": epochs,
+                "train_family": train_family,
+            },
         )
         return
 
@@ -808,14 +963,19 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
         def batches(device):
             order = shuffle.permutation(len(samples))
             return [
-                to_device(collate([samples[i] for i in order[k : k + batch_size]]), device)
+                to_device(
+                    collate([samples[i] for i in order[k : k + batch_size]]), device
+                )
                 for k in range(0, len(order), batch_size)
             ]
 
     device = get_device()
     print(f"[train] device: {device}")
     model = model.to(device)
-    n_layers = pretrain(model, [lb.batch if isinstance(lb, LookbackBatch) else lb for lb in batches(device)])
+    n_layers = pretrain(
+        model,
+        [lb.batch if isinstance(lb, LookbackBatch) else lb for lb in batches(device)],
+    )
     print(f"[train] froze {n_layers} PreNorm layers")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -824,14 +984,21 @@ def train_policy(samples: list, epochs: int, checkpoint: Path, train_family: dic
             stats = process_lookback(model, batches(device), optimizer=optimizer)
         else:
             stats = process(model, batches(device), optimizer=optimizer)
-        kacc = " ".join(f"acc@{k}={a:.2f}" for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True))
+        kacc = " ".join(
+            f"acc@{k}={a:.2f}"
+            for k, a in zip((1, 3, 5, 10), stats["kacc"], strict=True)
+        )
         print(f"[train] epoch {epoch:3d}  loss={stats['loss']:.4f}  {kacc}")
 
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
     save_checkpoint(
         model.cpu(),
         checkpoint,
-        extra={"n_samples": len(samples), "epochs": epochs, "train_family": train_family},
+        extra={
+            "n_samples": len(samples),
+            "epochs": epochs,
+            "train_family": train_family,
+        },
     )
     print(f"[train] checkpoint saved to {checkpoint}")
 
@@ -854,10 +1021,14 @@ def run_benchmark(checkpoint: Path, results_dir: Path, kind: str = "gasse") -> d
             for name in methods
         ]
     )
-    runner = Runner(config, methods, {"setcover_pilot": strate_root}, results_dir / "runs")
+    runner = Runner(
+        config, methods, {"setcover_pilot": strate_root}, results_dir / "runs"
+    )
     report = runner.run()
     for cell_key, counts in report.items():
-        print(f"[runner] {cell_key}: {counts['executed']} executed, {counts['skipped']} skipped")
+        print(
+            f"[runner] {cell_key}: {counts['executed']} executed, {counts['skipped']} skipped"
+        )
     return summarize(runner, config, results_dir)
 
 
@@ -873,7 +1044,9 @@ def summarize(runner: Runner, config: ExperimentConfig, results_dir: Path) -> di
             per_instance[name] = float(
                 np.mean([results[seed][name]["counters"]["nodes"] for seed in results])
             )
-            per_status.update({f"{seed}/{name}": results[seed][name]["status"] for seed in results})
+            per_status.update(
+                {f"{seed}/{name}": results[seed][name]["status"] for seed in results}
+            )
         nodes[cell.method] = per_instance
         statuses[cell.method] = per_status
 
@@ -902,25 +1075,47 @@ def summarize(runner: Runner, config: ExperimentConfig, results_dir: Path) -> di
         "n_instances": len(next(iter(nodes.values()))),
         "n_seeds": len(EVAL_SEEDS),
     }
-    (results_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=float))
+    (results_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, default=float)
+    )
     print(f"\n[summary] written to {results_dir / 'summary.json'}")
     return summary
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--method", choices=sorted(METHOD_SPECS), default="gasse", help="which ported method to drive (default gasse)")
-    parser.add_argument("--episodes", type=int, default=20, help="collection episodes (default 20)")
-    parser.add_argument("--epochs", type=int, default=20, help="training epochs (default 20)")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--method",
+        choices=sorted(METHOD_SPECS),
+        default="gasse",
+        help="which ported method to drive (default gasse)",
+    )
+    parser.add_argument(
+        "--episodes", type=int, default=20, help="collection episodes (default 20)"
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=20, help="training epochs (default 20)"
+    )
     parser.add_argument(
         "--results-dir",
         type=Path,
         default=Path(__file__).resolve().parent.parent / "results" / "pilot_gasse",
         help="where instances, checkpoint, runs, and summary are written",
     )
-    parser.add_argument("--train-family", type=parse_family, default=TRAIN_FAMILY, metavar="RxCxDENSITY")
-    parser.add_argument("--eval-family", type=parse_family, default=EVAL_FAMILY, metavar="RxCxDENSITY")
-    parser.add_argument("--collect-time-limit", type=float, default=60.0, help="per-episode collection budget")
+    parser.add_argument(
+        "--train-family", type=parse_family, default=TRAIN_FAMILY, metavar="RxCxDENSITY"
+    )
+    parser.add_argument(
+        "--eval-family", type=parse_family, default=EVAL_FAMILY, metavar="RxCxDENSITY"
+    )
+    parser.add_argument(
+        "--collect-time-limit",
+        type=float,
+        default=60.0,
+        help="per-episode collection budget",
+    )
     parser.add_argument(
         "--collect-workers",
         type=int,
@@ -977,6 +1172,17 @@ def main() -> None:
                 args.eval_family,
                 time_limit=args.collect_time_limit,
             )
+        elif args.method == "seqbnb":
+            # DAgger over the joint branching + node-selection regime: the
+            # expert (strong branching + the x* oracle) drives round 0, the
+            # policy its own episodes afterwards, every decision labeled.
+            train_seqbnb(
+                args.episodes,
+                checkpoint,
+                args.train_family,
+                args.epochs,
+                time_limit=args.collect_time_limit,
+            )
         elif args.method == "mamba":
             # Two-stage IL over relpscost-expert trajectories: the collected
             # episodes stay grouped (the decision order is the path model's
@@ -991,7 +1197,9 @@ def main() -> None:
                 kind=args.method,
             )
             if not trajectories or not any(trajectories):
-                raise SystemExit("no expert trajectories collected — increase --episodes")
+                raise SystemExit(
+                    "no expert trajectories collected — increase --episodes"
+                )
             train_mamba(trajectories, args.epochs, checkpoint, args.train_family)
         elif args.method.startswith("scavuzzo"):
             # Two stages: IL pretraining (the gasse loss over the shared
@@ -1009,8 +1217,12 @@ def main() -> None:
                     kind=args.method,
                 )
                 if not samples:
-                    raise SystemExit("no expert samples collected — increase --episodes")
-                train_policy(samples, args.epochs, il_checkpoint, args.train_family, kind="gasse")
+                    raise SystemExit(
+                        "no expert samples collected — increase --episodes"
+                    )
+                train_policy(
+                    samples, args.epochs, il_checkpoint, args.train_family, kind="gasse"
+                )
             train_scavuzzo(
                 il_checkpoint,
                 checkpoint,
@@ -1031,7 +1243,9 @@ def main() -> None:
                 kind=args.method,
             )
             if not samples:
-                raise SystemExit("no VHB demonstrations collected — increase --episodes")
+                raise SystemExit(
+                    "no VHB demonstrations collected — increase --episodes"
+                )
             train_sorrel(
                 samples,
                 args.epochs,
@@ -1051,7 +1265,9 @@ def main() -> None:
             )
             if not samples:
                 raise SystemExit("no expert samples collected — increase --episodes")
-            train_policy(samples, args.epochs, checkpoint, args.train_family, kind=args.method)
+            train_policy(
+                samples, args.epochs, checkpoint, args.train_family, kind=args.method
+            )
     else:
         print(f"[train] reusing checkpoint {checkpoint}")
     run_benchmark(checkpoint, results_dir, kind=args.method)

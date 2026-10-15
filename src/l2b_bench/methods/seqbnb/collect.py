@@ -105,6 +105,8 @@ class SeqBnBState:
     open_ids: NDArray[np.int64] | None  # node numbers (node selection)
     candidates: NDArray[np.int64] | None  # LP column positions (branching)
     graph: BipartiteGraph | None  # last-branching cache (None before root branching)
+    history: NDArray[np.float64]  # (t, 6) past action tokens (graph slots zeroed)
+    history_kinds: NDArray[np.int64]  # (t,) DecisionKind of each past decision
     t: int
     n_open: int
     gap: float
@@ -290,6 +292,132 @@ def _argmax_finite(scores: np.ndarray, candidates: NDArray[np.int64]) -> int | N
     return best
 
 
+class EpisodeTracker:
+    """The per-episode token bookkeeping, shared by the collector and the
+    benchmark policy: the node-token table (refreshed at node-selection
+    decisions, where the open set is exposed), the action-token history,
+    and the last-branching graph cache. The collector adds the expert
+    labels on top; a deployed policy uses the same tracker to build its
+    inputs, so training and inference see identical states.
+    """
+
+    def __init__(self) -> None:
+        self.token_table: dict[int, np.ndarray] = {}
+        self.order: list[int] = []  # node numbers, first-seen order
+        self.visited: set[int] = set()
+        self.history: list[np.ndarray] = []  # past action tokens
+        self.history_kinds: list[int] = []  # DecisionKind of each past decision
+        self.cached_graph: BipartiteGraph | None = None
+        self._bipartite: NodeBipartite | None = None
+        self._model = None
+
+    def reset(self, model) -> None:
+        """Bind to a new episode's model (the graph extraction needs it)."""
+        self.token_table = {}
+        self.order = []
+        self.visited = set()
+        self.history = []
+        self.history_kinds = []
+        self.cached_graph = None
+        self._bipartite = NodeBipartite()
+        self._bipartite.reset(model)
+        self._model = model
+
+    def _snapshot(self) -> tuple[np.ndarray, np.ndarray]:
+        past = (
+            np.stack(self.history) if self.history else np.zeros((0, ACTION_TOKEN_DIM))
+        )
+        return past, np.array(self.history_kinds, dtype=np.int64)
+
+    def observe(self, env: Environment, decision: Decision) -> SeqBnBState:
+        """Build the decision's state, refreshing whatever it exposes."""
+        if self._model is not env.model:
+            self.reset(env.model)
+        dynamics: BranchingNodeSelectionDynamics = env.dynamics
+        if decision.kind == DecisionKind.NODE_SELECTION:
+            nodes = dynamics.nodesel_rule.nodes
+            assert nodes is not None
+            gap = min(float(env.model.getGap()), GAP_CEILING)
+            fathomed = {entry[1] for entry in dynamics.infeasible_nodes}
+            incumbent = {entry[1] for entry in dynamics.feasible_nodes}
+            for node in nodes:
+                number = int(node.getNumber())
+                if number not in self.token_table:
+                    self.order.append(number)
+                self.token_table[number] = node_token(
+                    node, self.visited, fathomed, incumbent, gap
+                )
+            open_ids = np.array(
+                [int(node.getNumber()) for node in nodes], dtype=np.int64
+            )
+            tokens, token_ids = _window(self.token_table, open_ids, self.order)
+        else:
+            graph = self._bipartite.extract(env.model, done=False)
+            if graph is not None and graph.variable_features is not None:
+                self.cached_graph = graph
+            open_ids = None
+            tokens, token_ids = _window(
+                self.token_table, np.array([], dtype=np.int64), self.order
+            )
+            gap = min(float(env.model.getGap()), GAP_CEILING)
+        past, past_kinds = self._snapshot()
+        return SeqBnBState(
+            kind=decision.kind,
+            tokens=tokens,
+            token_ids=token_ids,
+            open_ids=open_ids,
+            candidates=None
+            if open_ids is not None
+            else np.asarray(decision.actions, dtype=np.int64),
+            graph=self.cached_graph,
+            history=past,
+            history_kinds=past_kinds,
+            t=len(self.history),
+            n_open=len(open_ids) if open_ids is not None else len(self.token_table),
+            gap=gap,
+        )
+
+    def record(self, state: SeqBnBState, action: int) -> None:
+        """Fold the taken action into the history (after the decision)."""
+        if state.kind == DecisionKind.NODE_SELECTION:
+            self.visited.add(action)
+            chosen = self.token_table[action][[2, 0, 1]].tolist()  # d, l, c
+            self.history.append(
+                np.array([state.gap, state.n_open, state.t] + chosen, dtype=np.float64)
+            )
+        else:
+            # The branching action's graph-derived slots are zeroed in the
+            # stored history (documented deviation).
+            self.history.append(
+                np.array(
+                    [state.gap, state.n_open, state.t, 0.0, 0.0, 0.0], dtype=np.float64
+                )
+            )
+        self.history_kinds.append(int(state.kind))
+
+
+def _sample_from_state(
+    state: SeqBnBState, action: int, expert: int | None
+) -> SeqBnBSample:
+    """The training sample of one decided state (labels optional: a deployed
+    policy builds unlabeled samples through the same path)."""
+    return SeqBnBSample(
+        kind=state.kind,
+        tokens=state.tokens.copy(),
+        token_ids=state.token_ids.copy(),
+        open_ids=None if state.open_ids is None else state.open_ids.copy(),
+        candidates=None if state.candidates is None else state.candidates.copy(),
+        history=state.history,
+        history_kinds=state.history_kinds,
+        action=action,
+        expert_action=-1 if expert is None else int(expert),
+        t=state.t,
+        n_open=state.n_open,
+        gap=state.gap,
+        graph=state.graph,
+    )
+
+
 def run_episode(
     env: Environment,
     select_action: Callable[[SeqBnBState, Decision, int | None], int],
@@ -306,9 +434,8 @@ def run_episode(
     single-instance pool) or a callable resolved after the reset — the
     instance a pool generator yields is only known once it has been drawn.
     """
-    dynamics: BranchingNodeSelectionDynamics = env.dynamics
     strong_branching = StrongBranchingScores()
-    bipartite = NodeBipartite()
+    tracker = EpisodeTracker()
     samples: list[SeqBnBSample] = []
     n_nodes = 0
 
@@ -316,119 +443,26 @@ def run_episode(
     if callable(reference):
         reference = reference(env)
     strong_branching.reset(env.model)
-    bipartite.reset(env.model)
+    tracker.reset(env.model)
     status = info.get("status")
-
-    token_table: dict[int, np.ndarray] = {}
-    order: list[int] = []  # node numbers, creation (first-seen) order
-    visited: set[int] = set()
-    history: list[np.ndarray] = []  # past action tokens (graph slots zeroed)
-    history_kinds: list[int] = []  # DecisionKind of each past decision
-    cached_graph: BipartiteGraph | None = None
 
     while not done:
         assert decision is not None
-        fathomed = {entry[1] for entry in dynamics.infeasible_nodes}
-        incumbent = {entry[1] for entry in dynamics.feasible_nodes}
-
+        state = tracker.observe(env, decision)
         if decision.kind == DecisionKind.NODE_SELECTION:
-            nodes = dynamics.nodesel_rule.nodes
+            nodes = env.dynamics.nodesel_rule.nodes
             assert nodes is not None
-            gap = min(float(env.model.getGap()), GAP_CEILING)
-            for node in nodes:
-                number = int(node.getNumber())
-                if number not in token_table:
-                    order.append(number)
-                token_table[number] = node_token(
-                    node, visited, fathomed, incumbent, gap
-                )
-            open_ids = np.array(
-                [int(node.getNumber()) for node in nodes], dtype=np.int64
-            )
-            tokens, token_ids = _window(token_table, open_ids, order)
-            state = SeqBnBState(
-                kind=decision.kind,
-                tokens=tokens,
-                token_ids=token_ids,
-                open_ids=open_ids,
-                candidates=None,
-                graph=cached_graph,
-                t=len(history),
-                n_open=len(open_ids),
-                gap=gap,
-            )
-            expert = oracle_node_selection(nodes, reference)
-            action = int(select_action(state, decision, expert))
-            # The sample's history carries the PAST decisions only — at
-            # inference the current action is the unknown being scored.
-            past = np.stack(history) if history else np.zeros((0, ACTION_TOKEN_DIM))
-            past_kinds = np.array(history_kinds, dtype=np.int64)
-            visited.add(action)
-            history.append(
-                np.array(
-                    [state.gap, state.n_open, state.t]
-                    + token_table[action][
-                        [2, 0, 1]
-                    ].tolist(),  # d, l, c of the chosen node
-                    dtype=np.float64,
-                )
-            )
-            history_kinds.append(int(DecisionKind.NODE_SELECTION))
+            expert: int | None = oracle_node_selection(nodes, reference)
         else:
             n_nodes += 1
-            graph = bipartite.extract(env.model, done=False)
-            if graph is not None and graph.variable_features is not None:
-                cached_graph = graph
-            open_ids = None
-            tokens, token_ids = _window(
-                token_table, np.array([], dtype=np.int64), order
-            )
-            state = SeqBnBState(
-                kind=decision.kind,
-                tokens=tokens,
-                token_ids=token_ids,
-                open_ids=None,
-                candidates=np.asarray(decision.actions, dtype=np.int64),
-                graph=cached_graph,
-                t=len(history),
-                n_open=len(token_table),
-                gap=min(float(env.model.getGap()), GAP_CEILING),
-            )
             scores = strong_branching.extract(env.model, done=False)
             expert = None
             if scores is not None and len(scores):
                 expert = _argmax_finite(np.asarray(scores), state.candidates)
-            action = int(select_action(state, decision, expert))
-            past = np.stack(history) if history else np.zeros((0, ACTION_TOKEN_DIM))
-            past_kinds = np.array(history_kinds, dtype=np.int64)
-            history.append(
-                np.array(
-                    [state.gap, state.n_open, state.t, 0.0, 0.0, 0.0], dtype=np.float64
-                )
-            )
-            history_kinds.append(int(DecisionKind.BRANCHING))
-
+        action = int(select_action(state, decision, expert))
         if expert is not None:
-            samples.append(
-                SeqBnBSample(
-                    kind=decision.kind,
-                    tokens=tokens.copy(),
-                    token_ids=token_ids.copy(),
-                    open_ids=None if open_ids is None else open_ids.copy(),
-                    candidates=None
-                    if state.candidates is None
-                    else state.candidates.copy(),
-                    history=past,
-                    history_kinds=past_kinds,
-                    action=action,
-                    expert_action=int(expert),
-                    t=state.t,
-                    n_open=state.n_open,
-                    gap=state.gap,
-                    graph=cached_graph,
-                )
-            )
-
+            samples.append(_sample_from_state(state, action, expert))
+        tracker.record(state, action)
         _obs, decision, _reward, done, info = env.step(action)
         status = info.get("status")
 
