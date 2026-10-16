@@ -51,6 +51,16 @@ NUM_BINS = 18
 MASK_VALUE = -6e4
 
 
+def amp_autocast():
+    """The released ``amp_type="torch_amp"``: every network inference in the
+    official codebase (self-play, MCTS, targets, ``update_weights``) runs
+    under ``torch.amp.autocast("cuda")``, with a ``GradScaler`` on the
+    training backward (core/train.py, selfplay_worker.py, cy_mcts.py,
+    reanalyze_worker.py). The context is a no-op without CUDA, so the
+    CPU-only tests exercise the same code path."""
+    return torch.autocast("cuda", enabled=torch.cuda.is_available())
+
+
 def mask_action_set(action_set: np.ndarray, size: int) -> np.ndarray:
     """The official binary candidate mask over all variables."""
     binary = np.zeros(size, dtype=np.bool_)

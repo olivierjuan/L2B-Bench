@@ -25,7 +25,8 @@ without the ray actor topology:
   vs emergency), the policy CE against the stored distributions, the value
   CE against the bootstrap targets weighted by the open-node appearance
   counts, the breward CE on the ghost-masked slots, and the SimSiam
-  consistency between the dynamics and oracle projections.
+  consistency between the dynamics and oracle projections — all inside the
+  released torch-amp region (``autocast("cuda")`` + ``GradScaler``).
 - **The loop** — the released schedule: warmup then 0.95^(step/1000) decay,
   the temperature at 1.0 for the first 20% then 0.99^(step/500), a target
   model refreshed every 200 steps, the checkpoint every 1000.
@@ -55,6 +56,7 @@ from torch_geometric.data import Batch
 from .collect import NODE_LIMIT, PlanBBTrajectory, make_env, run_selfplay_episode
 from .model import (
     PlanBBNet,
+    amp_autocast,
     format_batch_actions,
     geometric_batch,
     get_idx,
@@ -249,7 +251,8 @@ def prepare_node_value_target(
 
             batch_obs_lst = [x for ll in open_nodes_lst for x in ll]
             obs = geometric_batch(batch_obs_lst).to(device)
-            network_output = model.initial_inference(obs, root=True)
+            with amp_autocast():
+                network_output = model.initial_inference(obs, root=True)
 
             batch_indices = np.array(build_back_batch_values)
             batch_indices = np.cumsum(batch_indices, axis=0) - np.array(batch_indices)
@@ -277,9 +280,12 @@ def update_weights(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     unroll_steps: int,
+    scaler: "torch.amp.GradScaler | None" = None,
 ) -> dict:
-    """The official ``update_weights`` tree-MDP branch (no amp, no priority
-    updates). Returns the loss components for logging."""
+    """The official ``update_weights`` tree-MDP branch (torch amp: the
+    inference passes run under ``autocast("cuda")`` and the backward under a
+    ``GradScaler`` — the released ``amp_type``; no priority updates). Returns
+    the loss components for logging."""
     traj_obs = 3 * unroll_steps + 1
     batch_size = len(batch.obs_windows)
     obs_batch_ori = [
@@ -289,10 +295,11 @@ def update_weights(
     # The oracle pass: hidden states + emergency heads on every slot (the
     # official keeps the gradients — the first step's losses train the
     # representation through slot 0).
-    output_batch_target = [
-        model.initial_inference(geometric_batch(slot_obs).to(device), root=True, tree_mdp=True)
-        for slot_obs in obs_batch_ori
-    ]
+    with amp_autocast():
+        output_batch_target = [
+            model.initial_inference(geometric_batch(slot_obs).to(device), root=True, tree_mdp=True)
+            for slot_obs in obs_batch_ori
+        ]
     obs_batch_target = [output.hidden_state for output in output_batch_target]
     emergency_policy = [output.policy_logits for output in output_batch_target]
     emergency_value = [output.value for output in output_batch_target]
@@ -332,82 +339,85 @@ def update_weights(
     batch_obs = [obs_batch_init]
     batch_breward = [breward]
 
-    # loss of the unrolled steps
-    for step_i in range(unroll_steps):
-        current_idx = 3 * step_i
-        hidden_state_batch = batch_obs[current_idx]
+    # loss of the unrolled steps — the official's single autocast region:
+    # the unroll, the reward loss and the consistency loss all run inside
+    # it (core/train.py lines 201-413).
+    with amp_autocast():
+        for step_i in range(unroll_steps):
+            current_idx = 3 * step_i
+            hidden_state_batch = batch_obs[current_idx]
 
-        actions = format_batch_actions(action_batch[step_i, :], hidden_state_batch.nb_variables)
-        left_output, right_output = model.recurrent_inference(hidden_state_batch, actions, tree_mdp=True)
+            actions = format_batch_actions(action_batch[step_i, :], hidden_state_batch.nb_variables)
+            left_output, right_output = model.recurrent_inference(hidden_state_batch, actions, tree_mdp=True)
 
-        left_node_v, left_node_b, left_node_p, left_node_o = (
-            left_output.value,
-            left_output.breward,
-            left_output.policy_logits,
-            left_output.hidden_state,
-        )
-        right_node_v, right_node_b, right_node_p, right_node_o = (
-            right_output.value,
-            right_output.breward,
-            right_output.policy_logits,
-            right_output.hidden_state,
-        )
+            left_node_v, left_node_b, left_node_p, left_node_o = (
+                left_output.value,
+                left_output.breward,
+                left_output.policy_logits,
+                left_output.hidden_state,
+            )
+            right_node_v, right_node_b, right_node_p, right_node_o = (
+                right_output.value,
+                right_output.breward,
+                right_output.policy_logits,
+                right_output.hidden_state,
+            )
 
-        batch_obs += [left_node_o, right_node_o]
-        batch_breward += [left_node_b, right_node_b]
-        batch_node_values += [left_node_v, right_node_v]
-        batch_policy_logits += [left_node_p, right_node_p]
-        next_current_idx = current_idx + 3
+            batch_obs += [left_node_o, right_node_o]
+            batch_breward += [left_node_b, right_node_b]
+            batch_node_values += [left_node_v, right_node_v]
+            batch_policy_logits += [left_node_p, right_node_p]
+            next_current_idx = current_idx + 3
 
-        # Build next batch obs: cached window state or the slot oracle.
-        next_obs_idx = obs_idx_batch[next_current_idx]
-        next_obs, next_policy_logits, next_node_value = [], [], []
-        for batch_idx in range(batch_size):
-            obs_idx = next_obs_idx[batch_idx]
-            if obs_idx < next_current_idx:
-                next_obs.append(batch_obs[obs_idx][batch_idx])
-                next_node_value.append(batch_node_values[obs_idx][batch_idx])
-                next_policy_logits.append(batch_policy_logits[obs_idx][batch_idx])
-            else:
-                assert obs_idx == next_current_idx
-                next_obs.append(obs_batch_target[next_current_idx][batch_idx])
-                next_policy_logits.append(emergency_policy[next_current_idx][batch_idx])
-                next_node_value.append(emergency_value[next_current_idx][batch_idx].clone())
+            # Build next batch obs: cached window state or the slot oracle.
+            next_obs_idx = obs_idx_batch[next_current_idx]
+            next_obs, next_policy_logits, next_node_value = [], [], []
+            for batch_idx in range(batch_size):
+                obs_idx = next_obs_idx[batch_idx]
+                if obs_idx < next_current_idx:
+                    next_obs.append(batch_obs[obs_idx][batch_idx])
+                    next_node_value.append(batch_node_values[obs_idx][batch_idx])
+                    next_policy_logits.append(batch_policy_logits[obs_idx][batch_idx])
+                else:
+                    assert obs_idx == next_current_idx
+                    next_obs.append(obs_batch_target[next_current_idx][batch_idx])
+                    next_policy_logits.append(emergency_policy[next_current_idx][batch_idx])
+                    next_node_value.append(emergency_value[next_current_idx][batch_idx].clone())
 
-        next_obs = Batch.from_data_list(next_obs)
-        next_node_value = torch.cat(next_node_value).view(batch_size, -1)
-        next_policy_logits = torch.vstack(next_policy_logits)
+            next_obs = Batch.from_data_list(next_obs)
+            next_node_value = torch.cat(next_node_value).view(batch_size, -1)
+            next_policy_logits = torch.vstack(next_policy_logits)
 
-        batch_obs.append(next_obs)
-        batch_node_values.append(next_node_value)
-        batch_policy_logits.append(next_policy_logits)
+            batch_obs.append(next_obs)
+            batch_node_values.append(next_node_value)
+            batch_policy_logits.append(next_policy_logits)
 
-        policy_loss += (
-            -(torch.log_softmax(next_policy_logits, dim=1) * target_policy[step_i + 1, :]).sum(1)
-            * mask_batch[step_i, :]
-        )
-        value_loss += (
-            model.value_loss(left_node_v, target_value[current_idx + 1, :], tree_mdp=True)
-            * value_weights[current_idx + 1]
-        )
-        value_loss += (
-            model.value_loss(right_node_v, target_value[current_idx + 2, :], tree_mdp=True)
-            * value_weights[current_idx + 2]
-        )
-        value_loss += (
-            model.value_loss(next_node_value, target_value[current_idx + 3, :], tree_mdp=True)
-            * value_weights[current_idx + 3]
-        )
+            policy_loss += (
+                -(torch.log_softmax(next_policy_logits, dim=1) * target_policy[step_i + 1, :]).sum(1)
+                * mask_batch[step_i, :]
+            )
+            value_loss += (
+                model.value_loss(left_node_v, target_value[current_idx + 1, :], tree_mdp=True)
+                * value_weights[current_idx + 1]
+            )
+            value_loss += (
+                model.value_loss(right_node_v, target_value[current_idx + 2, :], tree_mdp=True)
+                * value_weights[current_idx + 2]
+            )
+            value_loss += (
+                model.value_loss(next_node_value, target_value[current_idx + 3, :], tree_mdp=True)
+                * value_weights[current_idx + 3]
+            )
 
-    # Reward loss
-    batch_breward = torch.stack(batch_breward).transpose(2, 1)
-    breward_loss = F.cross_entropy(batch_breward, target_breward[target_index], reduction="none").sum(0)
+        # Reward loss
+        batch_breward = torch.stack(batch_breward).transpose(2, 1)
+        breward_loss = F.cross_entropy(batch_breward, target_breward[target_index], reduction="none").sum(0)
 
-    # Consistency: dynamics projections vs the no-grad oracle projections.
-    for obs, obs_target in zip(batch_obs, obs_batch_target):
-        dynamic_proj = model.project(obs, with_grad=True)
-        observation_proj = model.project(obs_target, with_grad=False)
-        consistency_loss += consist_loss_func(dynamic_proj, observation_proj)
+        # Consistency: dynamics projections vs the no-grad oracle projections.
+        for obs, obs_target in zip(batch_obs, obs_batch_target):
+            dynamic_proj = model.project(obs, with_grad=True)
+            observation_proj = model.project(obs_target, with_grad=False)
+            consistency_loss += consist_loss_func(dynamic_proj, observation_proj)
 
     loss = consistency_loss + policy_loss + value_loss + breward_loss
     weighted_loss = loss.mean()
@@ -416,9 +426,17 @@ def update_weights(
     total_loss.register_hook(lambda grad: grad * gradient_scale)
 
     optimizer.zero_grad()
-    total_loss.backward()
+    if scaler is not None:
+        scaler.scale(total_loss).backward()
+        scaler.unscale_(optimizer)
+    else:
+        total_loss.backward()
     clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
-    optimizer.step()
+    if scaler is not None:
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        optimizer.step()
 
     return {
         "loss": total_loss.item(),
@@ -469,6 +487,9 @@ def train(
         p.requires_grad_(False)
     target_model.eval()
     optimizer = torch.optim.Adam(model.parameters(), lr=LR_INIT, weight_decay=WEIGHT_DECAY)
+    # The released torch-amp training (GradScaler; disabled without CUDA so
+    # the CPU tests take the plain backward path).
+    scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
     mcts = MCTS()
     print(f"[planbb] device: {device}", flush=True)
 
@@ -543,7 +564,7 @@ def train(
                 target_value=target_value,
             )
             model.train()
-            losses = update_weights(model, batch, optimizer, device, unroll_steps)
+            losses = update_weights(model, batch, optimizer, device, unroll_steps, scaler=scaler)
             trained_steps += 1
 
             # The target model lags the trainer (the official refreshes it

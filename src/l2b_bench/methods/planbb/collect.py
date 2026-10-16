@@ -62,7 +62,7 @@ from scipy.stats import entropy
 
 from ..bbmdp.collect import BBMDP_SCIP_PARAMS
 from ..sorrel.collect import TreeTracker
-from .model import PlanBBObs, geometric_batch
+from .model import PlanBBObs, amp_autocast, geometric_batch
 from .search import MCTS
 
 #: The released hyperparameters (config/milp/__init__.py).
@@ -676,7 +676,8 @@ def run_selfplay_episode(
             step_obs = trajectory.step_obs()
             action_nums = [step_obs.variable_features.shape[0]]
             batched = geometric_batch([step_obs]).to(device)
-            network_output = model.initial_inference(batched, root=True)
+            with amp_autocast():
+                network_output = model.initial_inference(batched, root=True)
 
             root_states = [[0]]
             value_pool = list(network_output.value.tolist())

@@ -36,7 +36,7 @@ import numpy as np
 import torch
 from torch_geometric.data import Batch
 
-from .model import format_batch_actions
+from .model import amp_autocast, format_batch_actions
 
 FLOAT_MAX = 1e6
 FLOAT_MIN = -FLOAT_MAX
@@ -495,7 +495,8 @@ class MCTS:
             hidden_states = Batch.from_data_list(currently_visited_nodes_obs).to(device)
             batch_actions = format_batch_actions(last_actions_t, hidden_states.nb_variables)
 
-            left_output, right_output = model.recurrent_inference(hidden_states, batch_actions)
+            with amp_autocast():
+                left_output, right_output = model.recurrent_inference(hidden_states, batch_actions)
 
             left_output_v = left_output.value.reshape(-1).tolist()
             left_output_b = left_output.breward.reshape(-1).tolist()
