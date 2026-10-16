@@ -68,6 +68,9 @@ from .search import MCTS
 logger = logging.getLogger(__name__)
 
 #: The released hyperparameters (config/milp/__init__.py + config_base.py).
+#: SetCovering overrides the default batch 64 (core/config_base.py line 391)
+#: — the pilot passes it explicitly, its graphs being ~20% larger than the
+#: official ecole defaults (500x600x0.10 vs 500x1000x0.05).
 BATCH_SIZE = 96
 LR_INIT = 1e-3
 LR_DECAY_RATE = 0.95

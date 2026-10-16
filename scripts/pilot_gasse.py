@@ -707,6 +707,7 @@ def train_planbb(
         training_steps=epochs * 625,
         time_limit=time_limit,
         seed=42,
+        batch_size=64,  # the official's SetCovering override (config_base.py)
     )
 
 
