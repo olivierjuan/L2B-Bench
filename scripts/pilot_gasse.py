@@ -70,6 +70,7 @@ from l2b_bench.methods.retrobranching.policy import retrobranching_method
 from l2b_bench.methods.scavuzzo.policy import scavuzzo_method
 from l2b_bench.methods.seqbnb.policy import seqbnb_method
 from l2b_bench.methods.sorrel.policy import sorrel_method
+from l2b_bench.methods.planbb.policy import planbb_method
 from l2b_bench.methods.tbrant.collect import collect_episode as tbrant_collect_episode
 from l2b_bench.methods.tbrant.policy import tbrant_method
 from l2b_bench.methods.tgppo.policy import tgppo_method
@@ -179,6 +180,14 @@ METHOD_SPECS = {
     "bbmdp": {
         "prob": None,
         "method": bbmdp_method,
+        "cache_name": None,
+    },
+    # PlanB&B is MuZero RL from scratch on the tree MDP over B&B open-node
+    # states: Gumbel MCTS self-play with the model-based h/g/f stack — no
+    # expert data either, the agent itself explores.
+    "planbb": {
+        "prob": None,
+        "method": planbb_method,
         "cache_name": None,
     },
     # CAMBranch collects exactly like gasse (the paper's SCIP 6.0.1
@@ -663,6 +672,39 @@ def train_bbmdp(
         checkpoint,
         episodes=episodes,
         n_epochs=epochs * 625,
+        time_limit=time_limit,
+        seed=42,
+    )
+
+
+def train_planbb(
+    episodes: int,
+    checkpoint: Path,
+    train_family: dict,
+    epochs: int,
+    time_limit: float = 60.0,
+) -> None:
+    """The official MuZero loop: Gumbel MCTS self-play from scratch over the
+    tree MDP on B&B open-node states — no expert data, the agent itself
+    explores (fresh instances every episode, like bbmdp).
+
+    ``--episodes`` bounds the episodes; ``--epochs`` bounds the gradient-step
+    budget at the pilot's scale (the official counts 62.5k gradient steps
+    over unbounded parallel episodes — here the bbmdp pilot's 625-per-epoch
+    scale).
+    """
+    from gyozas.instances import SetCoverGenerator
+
+    from l2b_bench.methods.planbb.train import train
+
+    generator = SetCoverGenerator(
+        rng=np.random.default_rng(TRAIN_RNG_SEED), **train_family
+    )
+    train(
+        generator,  # fresh instances forever; the episode budget stops the loop
+        checkpoint,
+        episodes=episodes,
+        training_steps=epochs * 625,
         time_limit=time_limit,
         seed=42,
     )
@@ -1169,6 +1211,16 @@ def main() -> None:
             # RL from scratch on the corrected vanilla MDP — no expert data
             # either; --epochs bounds the gradient-step budget.
             train_bbmdp(
+                args.episodes,
+                checkpoint,
+                args.train_family,
+                args.epochs,
+                time_limit=args.collect_time_limit,
+            )
+        elif args.method == "planbb":
+            # MuZero RL from scratch on the tree MDP over open-node states —
+            # no expert data either; --epochs bounds the gradient-step budget.
+            train_planbb(
                 args.episodes,
                 checkpoint,
                 args.train_family,
