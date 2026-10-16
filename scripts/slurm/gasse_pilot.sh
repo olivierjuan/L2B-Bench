@@ -38,8 +38,8 @@ EPOCHS=${EPOCHS:-100}
 # aligns the training family with the evaluation family.
 TRAIN_FAMILY=500x600x0.10
 EVAL_FAMILY=500x600x0.10     # the pilot's held-out evaluation family
-COLLECT_TIME_LIMIT=300       # per-episode budget during collection
-COLLECT_WORKERS=32           # parallel SCIP episodes (node has 64 cpus)
+COLLECT_TIME_LIMIT=${COLLECT_TIME_LIMIT:-300}       # per-episode budget during collection
+COLLECT_WORKERS=${COLLECT_WORKERS:-32}               # parallel SCIP episodes (node has 64 cpus)
 
 cd "$REPO"
 mkdir -p logs "$RESULTS"
