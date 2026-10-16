@@ -34,6 +34,7 @@ implementation it was ported from (references verified October 2026).
 | `dsccl` | Lu, Ma, Tao — *Dynamic Stratified Contrastive Learning with Upstream Augmentation for MILP Branching* ([arXiv 2511.21107](https://arxiv.org/abs/2511.21107)) | preprint 2025 | paper-only port |
 | `mamba` | Mamba-Branching (no paper record found; the repository — anonymous, "DoctorWatson", mirrored from Gitee — is the reference) | 2026 | [doctor-watson626/Mamba-Branching](https://github.com/doctor-watson626/Mamba-Branching) |
 | `bbmdp` | Strang, Alès, Bissuel, Juan, Kedad-Sidhoum, Rachelson — *A Markov Decision Process for Variable Selection in Branch & Bound* ([arXiv 2510.19348](https://arxiv.org/abs/2510.19348)) | NeurIPS 2025 | [abfariah/bbmdp](https://github.com/abfariah/bbmdp) |
+| `planbb` | Strang, Alès, Bissuel, Juan, Kedad-Sidhoum, Rachelson — *Planning in Branch-and-Bound: Model-Based Reinforcement Learning for Exact Combinatorial Optimization* ([arXiv 2511.09219](https://arxiv.org/abs/2511.09219)) | AAAI 2026 | [abfariah/planbb](https://github.com/abfariah/planbb) |
 | `seqbnb` | Liu, Liu, Yan, Shi, Zhao — *Seq-BnB: Sequence Model for Branch-and-Bound Node Selection and Branching* ([arXiv 2610.14835](https://arxiv.org/abs/2610.14835)) | 2026 | paper-only port (code promised upon publication) |
 | `gasse-relpscost` | control arm of the benchmark, not a published method: Gasse's protocol with the scalable expert (see the pilot results) | — | — |
 
@@ -83,12 +84,14 @@ runner.run()
 - [x] Baseline grid (default solver, pscost, relpscost)
 - [x] All method ports (one package per paper under `src/l2b_bench/methods/`):
       gasse, lookback, tbrant, treegate, retrobranching, scavuzzo (three
-      variants), tgppo, mamba, cambranch, dsccl, fmsts, sorrel, bbmdp, seqbnb,
+      variants), tgppo, mamba, cambranch, dsccl, fmsts, sorrel, bbmdp, planbb,
+      seqbnb,
       plus the `gasse-relpscost` control arm (same protocol as gasse with the
       scalable expert — measured cost of the expert switch: +25.7% nodes)
 - [x] Pilot campaign (2026-10): every method trained and evaluated at pilot
       scale on set covers — results below
-- [ ] Sorrel pilot campaign (job running; results land in `results/sorrel_gpu_v1`)
+- [x] Sorrel pilot campaign (results in `results/sorrel_gpu_v1`)
+- [ ] PlanB&B pilot campaign (results will land in `results/planbb_gpu_v1`)
 - [ ] G2 protocol freeze
 - [ ] Full campaign (methods × strates × 5 seeds) on the lab cluster
 
@@ -115,6 +118,7 @@ B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
 | *pscost* (baseline expert) | *3.436×* |
 | tbrant | 3.481× |
 | gasse-relpscost (control arm) | 3.766× |
+| sorrel † | 3.924× |
 | scavuzzo mdp | 5.074× |
 | tgppo | 7.728× |
 | scavuzzo tmdp+dfs | 8.620× |
@@ -136,6 +140,10 @@ Reading notes, at pilot scale:
 - Cross-family transfer does not hold (the first gasse campaign, trained on
   500×1000×0.05 and evaluated on 500×600×0.10, scored 27.0×); the numbers
   above are all train-family = eval-family.
+- † Sorrel hit the 120 s time limit on 23 of 30 runs at pilot scale — the PPO
+  stage did not learn within the pilot budget, so its node ratios are
+  right-censored by the budget rather than converged (the SGM is an
+  over-optimistic lower bound on its node count).
 
 Full per-run records: `results/<campaign>/` (each `summary.json` carries the
 grid's mean node counts, statuses, and the SGM of paired ratios).
