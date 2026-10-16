@@ -563,3 +563,68 @@ class TestEpisode:
         assert not done
         action = policy.select_action(obs, action_set)
         assert action in np.asarray(action_set)
+
+    def test_train_resume_after_preemption(self, tmp_path, monkeypatch):
+        # The campaign QoS is preemptible: a mid-training snapshot
+        # (<checkpoint>.train.pt) must let a requeued run pick up where the
+        # interrupted one stopped, and the model checkpoint must appear only
+        # on completion (the pilot gates on its existence).
+        import importlib
+
+        planbb_train = importlib.import_module("l2b_bench.methods.planbb.train")
+        monkeypatch.setattr(
+            planbb_train, "MCTS", lambda: MCTS(num_simulations=4, num_top_actions=4)
+        )
+        monkeypatch.setattr(planbb_train, "SAVE_CKPT_INTERVAL", 2)
+
+        real_update = planbb_train.update_weights
+        calls = {"n": 0}
+
+        def crashing_update(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 3:  # the preemption, mid-training
+                raise KeyboardInterrupt
+            return real_update(*args, **kwargs)
+
+        monkeypatch.setattr(planbb_train, "update_weights", crashing_update)
+
+        checkpoint = tmp_path / "planbb.pt"
+        resume_path = checkpoint.with_suffix(".train.pt")
+
+        # 100x120 covers are almost always integral at the root (one branchable
+        # in twenty), which would strand the resumed run with an empty replay;
+        # 200x300 covers branch often enough for self-play to refill it.
+        instances = lambda: _instances(20, rows=200, cols=300)
+
+        with pytest.raises(KeyboardInterrupt):
+            planbb_train.train(
+                instances(),
+                checkpoint,
+                episodes=15,
+                training_steps=5,
+                time_limit=30.0,
+                seed=0,
+                start_transitions=5,
+                batch_size=4,
+                device=torch.device("cpu"),
+            )
+        assert resume_path.exists()  # the snapshot from step 2 (or 4)
+        assert not checkpoint.exists()  # not complete — the pilot must retrain
+
+        # The resumed run skips the episodes the first one consumed and needs
+        # one trainable episode to finish the remaining steps (the per-episode
+        # ration recomputes as episodes deplete).
+        trained_steps = planbb_train.train(
+            instances(),
+            checkpoint,
+            episodes=15,
+            training_steps=5,
+            time_limit=30.0,
+            seed=0,
+            start_transitions=5,
+            batch_size=4,
+            device=torch.device("cpu"),
+        )
+        assert trained_steps == 5  # the budget was reached, not restarted
+        assert checkpoint.exists()  # completion writes the model checkpoint
+        assert not resume_path.exists()  # and retires the snapshot

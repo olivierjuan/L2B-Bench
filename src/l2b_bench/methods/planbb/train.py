@@ -473,10 +473,16 @@ def train(
     training-step or episode budget is spent.
 
     ``instances`` is an iterator of models. Returns the number of gradient
-    steps run; the final weights (and a resumable checkpoint every
-    ``SAVE_CKPT_INTERVAL`` steps) are written to ``checkpoint``.
+    steps run; the final weights are written to ``checkpoint`` only on
+    completion. A resumable snapshot (weights + optimizer + target + the
+    step/episode counters) lands next to it (``<checkpoint>.train.pt``) every
+    ``SAVE_CKPT_INTERVAL`` steps, and a call on a run interrupted mid-training
+    resumes from it (the replay is not part of the snapshot — the resumed
+    self-play refills it). The caller gates on the checkpoint's existence, so
+    a completed run is never re-entered (``--retrain`` deletes it upstream).
     """
     import copy
+    from pathlib import Path
 
     device = device or get_device()
     torch.manual_seed(seed)
@@ -496,10 +502,35 @@ def train(
     mcts = MCTS()
     print(f"[planbb] device: {device}", flush=True)
 
+    # Resume support: the campaign QoS is preemptible, so the full training
+    # state (weights, optimizer, target, step/episode counters) is snapshotted
+    # every SAVE_CKPT_INTERVAL steps next to the checkpoint. The checkpoint
+    # itself is written only on completion — the pilot's "checkpoint exists"
+    # test must mean "training finished", not "a snapshot exists".
+    resume_path = Path(checkpoint).with_suffix(".train.pt")
     replay: List[PlanBBTrajectory] = []
     n_transitions = 0
     trained_steps = 0
     n_episodes = 0
+    if resume_path.exists():
+        state = torch.load(resume_path, map_location=device, weights_only=True)
+        model.load_state_dict(state["model"])
+        target_model.load_state_dict(state["target_model"])
+        optimizer.load_state_dict(state["optimizer"])
+        scaler.load_state_dict(state["scaler"])
+        trained_steps = state["trained_steps"]
+        n_episodes = state["n_episodes"]
+        n_transitions = state["n_transitions"]
+        # The instance stream restarts with the caller's seed; skip the
+        # episodes already consumed so the resumed self-play continues the
+        # stream instead of replaying its head.
+        for _ in range(n_episodes):
+            next(instances)
+        print(
+            f"[planbb] resuming from {resume_path.name}: step {trained_steps}/{training_steps}, "
+            f"{n_episodes} episodes, {n_transitions} transitions (replay refilled by self-play)",
+            flush=True,
+        )
 
     def run_episode(start_training: bool) -> None:
         nonlocal n_transitions
@@ -529,9 +560,15 @@ def train(
     while trained_steps < training_steps and n_episodes < episodes:
         run_episode(start_training=True)
         n_episodes += 1
+        # The per-episode ration recomputes as episodes deplete (the last one
+        # inherits the whole remaining budget), so the step budget stays
+        # reachable no matter where a resumed run picks up.
         episodes_left = max(1, episodes - n_episodes)
         for _ in range(max(1, training_steps // episodes_left)):
-            if trained_steps >= training_steps or n_transitions < 2:
+            # A resumed run starts with an empty replay (the trajectories are
+            # not part of the snapshot): the empty-replay guard keeps the
+            # loop self-play-first until the replay refills.
+            if trained_steps >= training_steps or n_transitions < 2 or not replay:
                 break
             samples = sample_batch(replay, batch_size, rng)
             (
@@ -575,7 +612,18 @@ def train(
             if trained_steps % TARGET_MODEL_INTERVAL == 0:
                 target_model.load_state_dict(model.state_dict())
             if trained_steps % SAVE_CKPT_INTERVAL == 0:
-                torch.save(model.state_dict(), checkpoint)
+                torch.save(
+                    {
+                        "model": model.state_dict(),
+                        "target_model": target_model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "scaler": scaler.state_dict(),
+                        "trained_steps": trained_steps,
+                        "n_episodes": n_episodes,
+                        "n_transitions": n_transitions,
+                    },
+                    resume_path,
+                )
             if trained_steps % 100 == 0:
                 print(
                     f"[planbb] step {trained_steps}/{training_steps} "
@@ -586,6 +634,7 @@ def train(
                 )
 
     torch.save(model.state_dict(), checkpoint)
+    resume_path.unlink(missing_ok=True)
     print(
         f"[planbb] done: {trained_steps} gradient steps, {n_episodes} episodes, "
         f"{n_transitions} transitions -> {checkpoint}",
