@@ -8,10 +8,19 @@
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
 
-# The Gasse 2019 pilot on the lab cluster's A5000 (partition vn; the GPUs are
-# not declared to SLURM — no --gres, the card is just there). The node is
-# reserved exclusively: collection fans out over the CPUs (one SCIP per
-# worker), training runs on the GPU, evaluation is CPU-bound again.
+# The Gasse 2019 pilot on the lab cluster's GPU nodes. The defaults are the
+# vn partition's A5000 (22 GB — the GPUs are not declared to SLURM there, no
+# --gres, the card is just there); the planbb campaign needs the H100 80 GB
+# of the an partition (its update_weights oracle pass keeps the activations
+# of 10 slots x 64 set-cover graphs, which overflows 22 GB even under the
+# released torch amp). Command-line sbatch flags override the #SBATCH
+# defaults above:
+#   sbatch --partition=an --gres=gpu:h100:1 --exclusive=user \
+#          --export=ALL,METHOD=planbb,RESULTS=.../planbb_gpu_v1 \
+#          scripts/slurm/gasse_pilot.sh
+# The node is reserved exclusively by default: collection fans out over the
+# CPUs (one SCIP per worker), training runs on the GPU, evaluation is
+# CPU-bound again.
 #
 # Everything is cached and idempotent: training instances, expert samples,
 # the checkpoint, and the runner's records all survive a restart — a
