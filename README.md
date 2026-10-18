@@ -103,28 +103,28 @@ baseline columns are bit-identical between campaign summaries, so the
 comparisons are paired. Metric: shifted geometric mean of per-instance
 B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
 
-| Method | SGM nodes vs default |
-|---|---:|
-| **seqbnb** (joint branching + node selection, DAgger) | **1.016×** 🏆 |
-| lookback | 1.293× |
-| scavuzzo tmdp+objlim | 1.529× |
-| cambranch | 1.557× |
-| **planbb** (MuZero, Gumbel MCTS, 62 500 steps) | **1.589×** |
-| dsccl | 1.616× |
-| mamba | 1.621× |
-| treegate | 1.671× |
-| *relpscost* (baseline expert) | *1.677×* |
-| gasse | 2.996× |
-| retrobranching | 3.162× |
-| *pscost* (baseline expert) | *3.436×* |
-| tbrant | 3.481× |
-| gasse-relpscost (control arm) | 3.766× |
-| sorrel † | 3.924× |
-| scavuzzo mdp | 5.074× |
-| tgppo | 7.728× |
-| scavuzzo tmdp+dfs | 8.620× |
-| bbmdp | 9.009× |
-| fmsts | 20.263× |
+| Method | RL | SGM nodes vs default |
+|---|:---:|---:|
+| **seqbnb** (joint branching + node selection, DAgger) | no | **1.016×** 🏆 |
+| lookback | no | 1.293× |
+| scavuzzo tmdp+objlim | yes | 1.529× |
+| cambranch | no | 1.557× |
+| **planbb** (MuZero, Gumbel MCTS, 62 500 steps) | yes | **1.589×** |
+| dsccl | no | 1.616× |
+| mamba | no | 1.621× |
+| treegate | no | 1.671× |
+| *relpscost* (baseline expert) | — | *1.677×* |
+| gasse | no | 2.996× |
+| retrobranching | yes | 3.162× |
+| *pscost* (baseline expert) | — | *3.436×* |
+| tbrant | no | 3.481× |
+| gasse-relpscost (control arm) | no | 3.766× |
+| sorrel † | yes | 3.924× |
+| scavuzzo mdp | yes | 5.074× |
+| tgppo | yes | 7.728× |
+| scavuzzo tmdp+dfs | yes | 8.620× |
+| bbmdp | yes | 9.009× |
+| fmsts | yes | 20.263× |
 
 Reading notes, at pilot scale:
 
