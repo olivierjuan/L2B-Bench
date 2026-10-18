@@ -91,7 +91,7 @@ runner.run()
 - [x] Pilot campaign (2026-10): every method trained and evaluated at pilot
       scale on set covers — results below
 - [x] Sorrel pilot campaign (results in `results/sorrel_gpu_v1`)
-- [ ] PlanB&B pilot campaign (results will land in `results/planbb_gpu_v1`)
+- [x] PlanB&B pilot campaign (results in `results/planbb_gpu_v1`)
 - [ ] G2 protocol freeze
 - [ ] Full campaign (methods × strates × 5 seeds) on the lab cluster
 
@@ -109,6 +109,7 @@ B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
 | lookback | 1.293× |
 | scavuzzo tmdp+objlim | 1.529× |
 | cambranch | 1.557× |
+| **planbb** (MuZero, Gumbel MCTS, 62 500 steps) | **1.589×** |
 | dsccl | 1.616× |
 | mamba | 1.621× |
 | treegate | 1.671× |
