@@ -92,6 +92,7 @@ runner.run()
       scale on set covers — results below
 - [x] Sorrel pilot campaign (results in `results/sorrel_gpu_v1`)
 - [x] PlanB&B pilot campaign (results in `results/planbb_gpu_v1`)
+- [x] Seq-BnB BR-only ablation (results in `results/seqbnb_br_gpu_v1`)
 - [ ] G2 protocol freeze
 - [ ] Full campaign (methods × strates × 5 seeds) on the lab cluster
 
@@ -105,7 +106,8 @@ B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
 
 | Method | RL | SGM nodes vs default |
 |---|:---:|---:|
-| **seqbnb** (joint branching + node selection, DAgger) | no | **1.016×** 🏆 |
+| **seqbnb-br** (BR-only ablation: learned branching, SCIP default node selection) | no | **0.981×** 🏆 |
+| **seqbnb** (joint branching + node selection, DAgger) | no | **1.016×** |
 | lookback | no | 1.293× |
 | scavuzzo tmdp+objlim | yes | 1.529× |
 | cambranch | no | 1.557× |
@@ -128,9 +130,23 @@ B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
 
 Reading notes, at pilot scale:
 
-- **Seq-BnB reaches near-parity with SCIP's default** (1.016×, best of the
-  benchmark; 3 of 30 runs below 1.0×). It is the only port that trains both
-  branching and node selection jointly.
+- **Seq-BnB reaches near-parity with SCIP's default** (1.016×; 3 of 30 runs
+  below 1.0×). It is the only port that trains both branching and node
+  selection jointly.
+- **The BR-only ablation beats the full joint model** (seqbnb-br 0.981× vs
+  seqbnb 1.016×, same DAgger budget and instance pool): at pilot scale,
+  SCIP's default node selection (Estimate) is enough — the learned node
+  selection adds nothing here, where the paper's Table 9 found BR-only
+  slightly *worse* than the full model (34.24 vs 28.62 nodes). The joint
+  model spends capacity and x*-oracle supervision on a subproblem SCIP
+  already solves well at this scale.
+- **Generalization to 1000×1200×0.10** (same checkpoints, 900 s budget,
+  results in `results/gen1000x1200_v2_*`): relpscost 1.531× (0 timelimit),
+  gasse 2.676× (0), pscost 4.408× (0), planbb ≥ 5.242× (5/30 timelimit, all
+  on the hardest instance — its SGM is right-censored). The learned
+  policies degrade out of distribution while relpscost barely moves
+  (1.677× → 1.531×); planbb, the best RL method in-distribution, suffers
+  the most.
 - The imitation-learning methods with a full-fidelity expert label
   (seqbnb, lookback) sit at the top; RL-from-scratch methods (tgppo, bbmdp,
   fmsts, retrobranching) are undertrained at this scale — their published
