@@ -405,6 +405,7 @@ class TestEpisode:
         monkeypatch.setattr(bbmdp_train, "MEMORY_MIN_SIZE", 5)
         monkeypatch.setattr(bbmdp_train, "BATCH_SIZE", 4)
         monkeypatch.setattr(bbmdp_train, "SAVE_EVERY_EPISODES", 1)
+        monkeypatch.setattr(bbmdp_train, "SNAPSHOT_EVERY_EPISODES", 2)
         checkpoint = tmp_path / "bbmdp.pt"
         gradient_steps = bbmdp_train.train(
             _instances(12, rows=200, cols=250),
@@ -416,6 +417,12 @@ class TestEpisode:
         )
         assert checkpoint.exists()
         assert gradient_steps > 0  # at least one episode escaped the presolve
+        # The per-budget snapshot (episode 2 of 3 crosses the cadence).
+        snapshots = list(tmp_path.glob("bbmdp.pt.g*"))
+        assert len(snapshots) == 1
+        payload = torch.load(snapshots[0], map_location="cpu", weights_only=False)
+        assert payload["dqn"] is not None
+        assert payload["episodes"] == 2
         policy = BBMDPPolicy.from_checkpoint(checkpoint)
         assert isinstance(load_dqn(checkpoint), type(policy.model))
         env = make_env(_instances(4), time_limit=15.0, seed=1)

@@ -26,7 +26,9 @@ adapted to the harness's episode collection (:mod:`.collect`):
 Pilot-scale deviations (documented, like the other RL pilots): the official
 validation pass — 20 instances greedy every 100 episodes, best checkpoint
 kept — is dropped; this loop keeps the final policy and writes a resumable
-checkpoint every ``SAVE_EVERY_EPISODES`` episodes.
+checkpoint every ``SAVE_EVERY_EPISODES`` episodes, plus a numbered snapshot
+``<checkpoint>.gNNNNNN`` every 100 episodes (keyed on the official budget
+unit, gradient steps) so a convergence campaign can evaluate every budget.
 """
 
 import copy
@@ -61,6 +63,7 @@ TAU = 1e-4
 GRADIENT_CLIP_NORM = 10.0
 
 #: Pilot knob: checkpoint cadence (episodes).
+SNAPSHOT_EVERY_EPISODES = 100
 SAVE_EVERY_EPISODES = 10
 
 
@@ -321,6 +324,14 @@ def train(
         )
         if episode % SAVE_EVERY_EPISODES == 0:
             agent.save(checkpoint)
+        if episode % SNAPSHOT_EVERY_EPISODES == 0:
+            # A numbered copy keyed on the official budget unit (gradient
+            # steps): convergence campaigns evaluate each snapshot on the
+            # pilot grid to trace SGM vs budget.
+            agent.save(
+                Path(f"{checkpoint}.g{gradient_steps:06d}"),
+                extra={"episodes": episode, "grad_steps": gradient_steps},
+            )
     agent.save(checkpoint)
     print(f"[train] saved {checkpoint} after {gradient_steps} gradient steps", flush=True)
     return gradient_steps
