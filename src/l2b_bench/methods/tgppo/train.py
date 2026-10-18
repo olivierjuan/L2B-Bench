@@ -551,7 +551,8 @@ def train(
     baseline-solved inline under the sandbox setting, then handed to the
     environment with the cutoff set). The checkpoint is overwritten after
     every update — a cluster job killed at its wall time keeps what it
-    learned.
+    learned — and a numbered snapshot ``<checkpoint>.uNNN`` is kept per
+    update so a convergence campaign can evaluate every budget.
     """
     device = device or get_device()
     torch.manual_seed(seed)
@@ -599,11 +600,12 @@ def train(
             batch = []
             actor.cpu()
             critic.cpu()
+            extra = {"episodes": episode_idx, "updates": n_updates, "seed": seed}
+            save_checkpoint(actor, critic, checkpoint, extra=extra)
+            # A numbered copy per update: convergence campaigns evaluate each
+            # snapshot on the pilot grid to trace SGM vs training budget.
             save_checkpoint(
-                actor,
-                critic,
-                checkpoint,
-                extra={"episodes": episode_idx, "updates": n_updates, "seed": seed},
+                actor, critic, Path(f"{checkpoint}.u{n_updates:03d}"), extra=extra
             )
             actor.to(device)
             critic.to(device)

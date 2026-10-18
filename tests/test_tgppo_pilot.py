@@ -277,6 +277,22 @@ class TestTrain:
         assert payload["episodes"] == 2
         assert payload["updates"] == 1
 
+    def test_train_writes_a_snapshot_per_update(self, tmp_path):
+        snapshot = tmp_path / "tgppo.pt.u001"
+        train(
+            _instances(2, seed=11),
+            tmp_path / "tgppo.pt",
+            episodes=2,
+            time_limit=30.0,
+            seed=0,
+            device=torch.device("cpu"),
+            log=lambda *_: None,
+        )
+        assert snapshot.exists()
+        actor, critic = load_checkpoint(snapshot, device=torch.device("cpu"))
+        assert isinstance(actor, Actor)
+        assert isinstance(critic, Critic)
+
 
 class TestPolicy:
     def test_tgppo_method_is_runner_ready(self, tmp_path):
