@@ -403,6 +403,7 @@ class TestTrain:
         fmsts_train = importlib.import_module("l2b_bench.methods.fmsts.train")
 
         monkeypatch.setattr(fmsts_train, "BATCH_SIZE", 4)
+        monkeypatch.setattr(fmsts_train, "SNAPSHOT_EVERY_ITERATIONS", 3)
         pool = tmp_path / "pool"
         pool.mkdir()
         _write_pool(pool, n=6, rows=200, cols=250)
@@ -417,6 +418,12 @@ class TestTrain:
         )
         assert checkpoint.exists()
         assert n_updates > 0
+        # The per-budget snapshots (cadence 3; a rejected episode skips its
+        # snapshot, so the count depends on the redraws).
+        snapshots = sorted(tmp_path.glob("fmsts.pt.i*"))
+        assert 1 <= len(snapshots) <= 2
+        _m, mean, _c, _can = load_checkpoint(snapshots[0])
+        assert mean.shape == (200 * 250 + 200 + 250,)
         # The checkpoint carries the fitted PCA, weights-only loadable.
         _model, mean, components, canonical = load_checkpoint(checkpoint)
         assert canonical == (200, 250)

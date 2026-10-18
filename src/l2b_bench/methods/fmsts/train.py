@@ -239,6 +239,10 @@ def load_checkpoint(
     return model, data["pca_mean"].numpy(), components, tuple(data["canonical"])
 
 
+#: Pilot knob: snapshot cadence (iterations) for convergence campaigns.
+SNAPSHOT_EVERY_ITERATIONS = 500
+
+
 def train(
     instance_dir: Path,
     checkpoint: Path,
@@ -317,6 +321,18 @@ def train(
             f"buffer={len(buffer)}  updates={n_updates}  eps={epsilon:.3f}  loss={loss:.4f}",
             flush=True,
         )
+        if iteration % SNAPSHOT_EVERY_ITERATIONS == 0:
+            # A numbered copy per budget slice: convergence campaigns
+            # evaluate each snapshot on the pilot grid to trace SGM vs
+            # budget (epsilon anneals over the whole budget, so each
+            # snapshot is a point on a different schedule too).
+            save_checkpoint(
+                model,
+                mean,
+                components,
+                canonical,
+                Path(f"{checkpoint}.i{iteration:06d}"),
+            )
     save_checkpoint(model, mean, components, canonical, checkpoint)
     print(f"[train] saved {checkpoint} after {n_updates} gradient updates", flush=True)
     return n_updates
