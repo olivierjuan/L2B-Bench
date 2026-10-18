@@ -359,6 +359,10 @@ class TestOnlineStage:
         assert checkpoint.exists()
         actor = load_actor(checkpoint)
         assert isinstance(actor, GNNPolicy)
+        # The per-epoch numbered snapshot (epoch 1) is directly loadable.
+        snapshot = tmp_path / "ppo.pt.p0001"
+        assert snapshot.exists()
+        assert isinstance(load_actor(snapshot), GNNPolicy)
 
 
 class TestPolicyBridge:

@@ -585,17 +585,17 @@ def train_online(
             f"actor={ppo_stats['actor_loss'] / max(1, n_rollouts):.4f}"
         )
         # Checkpoint after every epoch — a job killed at its wall time keeps
-        # everything learned so far.
-        agent.save(
-            checkpoint,
-            extra={
-                "stage": "PPO+SIL",
-                "epoch": epoch,
-                "episodes": state["n_episodes"],
-                "td3bc_checkpoint": str(td3bc_checkpoint),
-                "seed": seed,
-            },
-        )
+        # everything learned so far — and a numbered copy every epoch so a
+        # convergence campaign can evaluate each budget on the pilot grid.
+        extra = {
+            "stage": "PPO+SIL",
+            "epoch": epoch,
+            "episodes": state["n_episodes"],
+            "td3bc_checkpoint": str(td3bc_checkpoint),
+            "seed": seed,
+        }
+        agent.save(checkpoint, extra=extra)
+        agent.save(Path(f"{checkpoint}.p{epoch:04d}"), extra=extra)
         if n_rollouts == 0:
             break
     log(f"[ppo] checkpoint saved to {checkpoint}")
