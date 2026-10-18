@@ -111,7 +111,7 @@ B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
 | lookback | no | 1.293× |
 | scavuzzo tmdp+objlim | yes | 1.529× |
 | cambranch | no | 1.557× |
-| **planbb** (MuZero, Gumbel MCTS, 62 500 steps) | yes | **1.589×** |
+| **planbb** ‡ (MuZero, Gumbel MCTS, 62 500 steps) | yes | **1.589×** |
 | dsccl | no | 1.616× |
 | mamba | no | 1.621× |
 | treegate | no | 1.671× |
