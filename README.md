@@ -117,16 +117,16 @@ B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
 | treegate | no | 1.671× |
 | *relpscost* (baseline expert) | — | *1.677×* |
 | gasse | no | 2.996× |
-| retrobranching | yes | 3.162× |
+| retrobranching ‡ | yes | 3.162× |
 | *pscost* (baseline expert) | — | *3.436×* |
 | tbrant | no | 3.481× |
 | gasse-relpscost (control arm) | no | 3.766× |
-| sorrel † | yes | 3.924× |
-| scavuzzo mdp | yes | 5.074× |
-| tgppo | yes | 7.728× |
-| scavuzzo tmdp+dfs | yes | 8.620× |
-| bbmdp | yes | 9.009× |
-| fmsts | yes | 20.263× |
+| sorrel ‡ | yes | 3.924× |
+| scavuzzo mdp ‡ | yes | 5.074× |
+| tgppo ‡ | yes | 7.728× |
+| scavuzzo tmdp+dfs ‡ | yes | 8.620× |
+| bbmdp ‡ | yes | 9.009× |
+| fmsts ‡ | yes | 20.263× |
 
 Reading notes, at pilot scale:
 
@@ -157,7 +157,16 @@ Reading notes, at pilot scale:
 - Cross-family transfer does not hold (the first gasse campaign, trained on
   500×1000×0.05 and evaluated on 500×600×0.10, scored 27.0×); the numbers
   above are all train-family = eval-family.
-- † Sorrel hit the 120 s time limit on 23 of 30 runs at pilot scale — the PPO
+- ‡ **Undertrained at pilot scale** — the row measures the method at a small
+  slice of its published training regime, not its quality. Effective budgets
+  consumed: tgppo 2 PPO updates (policy entropy ≈ ln 54, i.e. still near
+  uniform), sorrel 1 PPO epoch after its offline stage, bbmdp 100 episodes /
+  11.8k gradient steps, retrobranching 9 episodes, fmsts 1k iterations, the
+  scavuzzo mdp/tmdp+dfs variants likewise. planbb is the only RL method that
+  got a full training budget (62 500 steps, 21.5 h on an H100) — and, notably,
+  the only RL method above relpscost. Convergence campaigns for the ‡ methods
+  are the next step before the G2 freeze.
+- Sorrel hit the 120 s time limit on 23 of 30 runs at pilot scale — the PPO
   stage did not learn within the pilot budget, so its node ratios are
   right-censored by the budget rather than converged (the SGM is an
   over-optimistic lower bound on its node count).
