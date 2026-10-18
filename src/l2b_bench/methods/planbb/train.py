@@ -82,6 +82,10 @@ TEMPERATURE_DECAY = 0.99
 TEMPERATURE_DECAY_STEP = 500
 TARGET_MODEL_INTERVAL = 200
 SAVE_CKPT_INTERVAL = 1_000
+#: Pilot knob: numbered-snapshot cadence (steps) for convergence campaigns —
+#: each <checkpoint>.sNNNNNN is a deployable weights file, so the pilot grid
+#: can evaluate every budget slice.
+SNAPSHOT_EVERY_STEPS = 10_000
 
 
 def consist_loss_func(f1, f2, alpha: float = 0.5) -> torch.Tensor:
@@ -623,6 +627,11 @@ def train(
                         "n_transitions": n_transitions,
                     },
                     resume_path,
+                )
+            if trained_steps % SNAPSHOT_EVERY_STEPS == 0:
+                torch.save(
+                    model.state_dict(),
+                    Path(f"{checkpoint}.s{trained_steps:06d}"),
                 )
             if trained_steps % 100 == 0:
                 print(

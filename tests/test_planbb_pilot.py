@@ -539,6 +539,7 @@ class TestEpisode:
         )
 
         checkpoint = tmp_path / "planbb.pt"
+        monkeypatch.setattr(planbb_train, "SNAPSHOT_EVERY_STEPS", 2)
         trained_steps = planbb_train.train(
             _instances(6),
             checkpoint,
@@ -552,6 +553,10 @@ class TestEpisode:
         )
         assert checkpoint.exists()
         assert trained_steps > 0  # at least one episode escaped the presolve
+        # The numbered weight snapshots are deployable checkpoints.
+        snapshots = sorted(tmp_path.glob("planbb.pt.s*"))
+        assert len(snapshots) >= 1
+        assert PlanBBPolicy.from_checkpoint(snapshots[0]) is not None
 
         policy = PlanBBPolicy.from_checkpoint(checkpoint)
         env = make_env(_instances(4), time_limit=30.0, seed=1)
