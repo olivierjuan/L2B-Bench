@@ -58,7 +58,12 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from gyozas.dynamics import BranchingNodeSelectionDynamics, Decision, DecisionKind
+from gyozas.dynamics import (
+    BranchingDynamics,
+    BranchingNodeSelectionDynamics,
+    Decision,
+    DecisionKind,
+)
 from gyozas.environment import Environment
 from gyozas.informations.solve_status import SolveStatus
 from gyozas.observations import NodeBipartite
@@ -186,6 +191,8 @@ def _window(
             break
         keep.add(n)
     ids = np.array(sorted(keep), dtype=np.int64)
+    if not len(ids):  # no node has a token yet (the BR-only regime never makes one)
+        return np.zeros((0, NODE_TOKEN_DIM)), ids
     tokens = np.stack([token_table[int(n)] for n in ids])
     return tokens, ids
 
@@ -505,14 +512,36 @@ class PoolGenerator:
         return model
 
 
+class BranchingOnlyDynamics(BranchingDynamics):
+    """Learned branching under SCIP's default node selection, speaking the
+    joint regime's :class:`Decision` protocol (every decision is a branching
+    one), so the tracker and the policy need no second code path."""
+
+    def reset(self, model):
+        done, actions = super().reset(model)
+        return done, _branching_decision(actions)
+
+    def step(self, action):
+        done, actions = super().step(action)
+        return done, _branching_decision(actions)
+
+
+def _branching_decision(actions) -> Decision | None:
+    if actions is None:
+        return None
+    return Decision(kind=DecisionKind.BRANCHING, actions=actions)
+
+
 def make_env(
     generator: PoolGenerator,
     scip_params: dict | None = None,
     time_limit: float | None = None,
+    node_selection: bool = True,
 ) -> Environment:
     """The collection environment: the joint dynamics, no observation
     function (the collector extracts the bipartite graph itself, at the
-    branching pauses where it is safe)."""
+    branching pauses where it is safe). ``node_selection=False`` is the
+    paper's BR-only ablation: SCIP's default (Estimate) selects the nodes."""
     params = dict(scip_params or SEQBNB_SCIP_PARAMS)
     if time_limit is not None:
         params["limits/time"] = time_limit
@@ -521,7 +550,9 @@ def make_env(
         instance_generator=generator,
         information_function=SolveStatus(),
         scip_params=params,
-        dynamics=BranchingNodeSelectionDynamics(),
+        dynamics=(
+            BranchingNodeSelectionDynamics() if node_selection else BranchingOnlyDynamics()
+        ),
     )
 
 
@@ -533,6 +564,7 @@ def collect(
     pattern: str = "*.mps",
     time_limit: float | None = None,
     on_episode: Any = None,
+    node_selection: bool = True,
 ) -> CollectionResult:
     """Collect samples over ``n_episodes`` joint-regime episodes.
 
@@ -550,14 +582,19 @@ def collect(
     references = ReferenceCache()
     result = CollectionResult()
     generator = PoolGenerator(instance_dir, pattern=pattern, rng=seeds[0])
-    env = make_env(generator, time_limit=time_limit)
+    env = make_env(generator, time_limit=time_limit, node_selection=node_selection)
+
+    def reference_for(_env: Environment) -> dict[str, float] | None:
+        # The x* oracle labels node selection only; the BR-only regime has none.
+        if not node_selection:
+            return None
+        return references.get(generator.current_path)
+
     try:
         for episode in range(n_episodes):
             triplet = SeedTriplet.from_base_seed(int(seeds[episode]))
             env.seed(triplet.solver)
-            samples, n_nodes, status = run_episode(
-                env, select_action, lambda _env: references.get(generator.current_path)
-            )
+            samples, n_nodes, status = run_episode(env, select_action, reference_for)
             result.samples.extend(samples)
             result.n_episodes += 1
             result.n_nodes += n_nodes

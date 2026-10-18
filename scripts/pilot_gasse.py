@@ -225,6 +225,13 @@ METHOD_SPECS = {
         "method": seqbnb_method,
         "cache_name": None,
     },
+    # The paper's BR-only ablation (Table 9): learned branching, SCIP's default
+    # node selection (Estimate). Same DAgger budget and pool as seqbnb.
+    "seqbnb-br": {
+        "prob": None,
+        "method": lambda checkpoint: seqbnb_method(checkpoint, node_selection=False),
+        "cache_name": None,
+    },
 }
 
 # SORREL's episode filter, scaled to the pilot's instances: the official
@@ -762,6 +769,7 @@ def train_seqbnb(
     train_family: dict,
     epochs: int,
     time_limit: float = 60.0,
+    node_selection: bool = True,
 ) -> None:
     """The paper's DAgger over the joint regime: expert round 0, then the
     policy's own episodes with the expert's labels.
@@ -793,6 +801,7 @@ def train_seqbnb(
         rounds=max(1, epochs),
         episodes_per_round=episodes,
         time_limit=time_limit,
+        node_selection=node_selection,
     )
 
 
@@ -1247,16 +1256,19 @@ def main() -> None:
                 args.eval_family,
                 time_limit=args.collect_time_limit,
             )
-        elif args.method == "seqbnb":
+        elif args.method in ("seqbnb", "seqbnb-br"):
             # DAgger over the joint branching + node-selection regime: the
             # expert (strong branching + the x* oracle) drives round 0, the
             # policy its own episodes afterwards, every decision labeled.
+            # seqbnb-br keeps the branching decisions only (no x*, no node
+            # selection: SCIP's default picks the nodes).
             train_seqbnb(
                 args.episodes,
                 checkpoint,
                 args.train_family,
                 args.epochs,
                 time_limit=args.collect_time_limit,
+                node_selection=args.method == "seqbnb",
             )
         elif args.method == "mamba":
             # Two-stage IL over relpscost-expert trajectories: the collected

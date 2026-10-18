@@ -125,6 +125,7 @@ def train(
     episodes_per_round: int,
     base_seed: int = 42,
     time_limit: float | None = None,
+    node_selection: bool = True,
 ) -> dict[str, float]:
     """The DAgger loop: expert round 0, then the policy's own episodes.
 
@@ -170,6 +171,7 @@ def train(
             seeds=seeds,
             select_action=select_action,
             time_limit=time_limit,
+            node_selection=node_selection,
         )
         aggregated.extend(result.samples)
         loss = _train_epoch(

@@ -13,10 +13,14 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from gyozas.dynamics import BranchingNodeSelectionDynamics, Decision, DecisionKind
+from gyozas.dynamics import (
+    BranchingNodeSelectionDynamics,
+    Decision,
+    DecisionKind,
+)
 from gyozas.runner import Method
 
-from .collect import EpisodeTracker, SeqBnBState, _sample_from_state
+from .collect import BranchingOnlyDynamics, EpisodeTracker, SeqBnBState, _sample_from_state
 from .model import SeqBnBModel, collate, to_device
 
 
@@ -69,20 +73,25 @@ class SeqBnBPolicy:
         return action
 
 
-def seqbnb_method(checkpoint: str | Path) -> Method:
+def seqbnb_method(checkpoint: str | Path, node_selection: bool = True) -> Method:
     """The Seq-BnB method, ready for the runner's method table.
 
     The method declares its own dynamics — the joint branch-and-node-
     selection regime — and the fidelity profile ``seqbnb`` recharges the
-    native regime (R5.4): the paper's SCIP parameters.
+    native regime (R5.4): the paper's SCIP parameters. ``node_selection=False``
+    is the BR-only ablation (the paper's Table 9): the learned branching with
+    SCIP's default node selection.
     """
+    name = "seqbnb" if node_selection else "seqbnb-br"
+    dynamics_cls = BranchingNodeSelectionDynamics if node_selection else BranchingOnlyDynamics
     return Method(
-        name="seqbnb",
+        name=name,
         policy=lambda: SeqBnBPolicy.from_checkpoint(checkpoint),
         config={
             "checkpoint": str(checkpoint),
             "architecture": "Seq-BnB (arXiv 2610.14835)",
+            "node_selection": node_selection,
         },
         fidelity="seqbnb",
-        dynamics=lambda: BranchingNodeSelectionDynamics(),
+        dynamics=dynamics_cls,
     )

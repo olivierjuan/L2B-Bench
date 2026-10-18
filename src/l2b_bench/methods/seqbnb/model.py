@@ -351,14 +351,10 @@ class SeqBnBModel(torch.nn.Module):
         sequence = self._sequence(batch, pooled)
         # The sequence's own padding mask: node + graph tokens are real,
         # action tokens pad at the end.
-        padding = torch.cat(
-            [
-                batch.token_mask,
-                torch.zeros_like(batch.token_mask[:, :1]),
-                batch.history_mask,
-            ],
-            dim=1,
+        graph_mask = torch.zeros(
+            batch.token_mask.shape[0], 1, dtype=torch.bool, device=batch.token_mask.device
         )
+        padding = torch.cat([batch.token_mask, graph_mask, batch.history_mask], dim=1)
         contextual = self.encoder(sequence, src_key_padding_mask=padding)
 
         logits: list[torch.Tensor] = []

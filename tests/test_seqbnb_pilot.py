@@ -10,6 +10,7 @@ from gyozas.instances import SetCoverGenerator
 from l2b_bench.methods.seqbnb.collect import (
     ACTION_TOKEN_DIM,
     GAP_CEILING,
+    BranchingOnlyDynamics,
     L_MAX,
     NODE_TOKEN_DIM,
     PoolGenerator,
@@ -285,6 +286,67 @@ class TestEpisode:
         assert result.n_episodes == 2
         assert len(result.statuses) == 2
         assert result.samples
+
+
+class TestBranchingOnlyAblation:
+    """The paper's BR-only variant: learned branching, SCIP's default node
+    selection — no node-selection decisions, hence no x* oracle."""
+
+    def test_branching_only_episode_has_no_node_selection(self, tmp_path):
+        _write_pool(tmp_path, 4, rows=200, cols=250)
+        generator = PoolGenerator(tmp_path, rng=np.random.default_rng(0))
+        env = make_env(generator, node_selection=False)
+        assert isinstance(env.dynamics, BranchingOnlyDynamics)
+        kinds_seen = set()
+        try:
+            for _ in range(8):
+                samples, _n_nodes, _status = run_episode(
+                    env, lambda s, d, e: e, lambda _env: None
+                )
+                kinds_seen.update(s.kind for s in samples)
+                if DecisionKind.BRANCHING in kinds_seen:
+                    break
+        finally:
+            env.close()
+        assert kinds_seen == {DecisionKind.BRANCHING}
+
+    def test_collect_without_node_selection_is_branching_only(self, tmp_path):
+        _write_pool(tmp_path, 2, rows=200, cols=250)
+        result = collect(
+            tmp_path,
+            n_episodes=2,
+            seeds=[41, 42],
+            select_action=lambda s, d, e: e,
+            node_selection=False,
+        )
+        assert result.n_episodes == 2
+        assert result.samples
+        assert {s.kind for s in result.samples} == {DecisionKind.BRANCHING}
+
+    def test_method_declares_the_branching_only_dynamics(self, tmp_path):
+        from l2b_bench.methods.seqbnb.policy import seqbnb_method
+
+        method = seqbnb_method(tmp_path / "seqbnb.pt", node_selection=False)
+        assert method.name == "seqbnb-br"
+        assert isinstance(method.dynamics(), BranchingOnlyDynamics)
+        assert seqbnb_method(tmp_path / "seqbnb.pt").name == "seqbnb"
+
+    def test_dagger_train_without_node_selection_runs(self, tmp_path):
+        from l2b_bench.methods.seqbnb.train import train
+
+        _write_pool(tmp_path, 2, rows=200, cols=250)
+        checkpoint = tmp_path / "seqbnb-br.pt"
+        report = train(
+            tmp_path,
+            checkpoint,
+            rounds=1,
+            episodes_per_round=1,
+            base_seed=7,
+            time_limit=60.0,
+            node_selection=False,
+        )
+        assert "round_0" in report and "round_1" in report
+        assert checkpoint.exists()
 
 
 class TestPoolGenerator:
