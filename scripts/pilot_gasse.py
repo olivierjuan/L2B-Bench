@@ -1180,6 +1180,13 @@ def main() -> None:
         help="parallel collection episode workers (each runs its own SCIP; 1 = sequential)",
     )
     parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=None,
+        help="where to find (or write) <method>.pt; default: the results dir. Pointing "
+        "it at an earlier campaign evaluates its trained model on new families",
+    )
+    parser.add_argument(
         "--retrain",
         action="store_true",
         help="re-collect and re-train even if a checkpoint exists (default: reuse it)",
@@ -1188,7 +1195,8 @@ def main() -> None:
 
     results_dir: Path = args.results_dir
     write_eval_instances(results_dir / "instances" / "setcover_pilot", args.eval_family)
-    checkpoint = results_dir / f"{args.method}.pt"
+    checkpoint_dir = args.checkpoint_dir or results_dir
+    checkpoint = checkpoint_dir / f"{args.method}.pt"
     if args.retrain or not checkpoint.exists():
         if args.method == "retrobranching":
             # RL: the agent explores on fresh training instances — no expert

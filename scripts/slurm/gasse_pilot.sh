@@ -46,9 +46,14 @@ EPOCHS=${EPOCHS:-100}
 # policy ends up 27x worse than the default solver. The pilot therefore
 # aligns the training family with the evaluation family.
 TRAIN_FAMILY=500x600x0.10
-EVAL_FAMILY=500x600x0.10     # the pilot's held-out evaluation family
+EVAL_FAMILY=${EVAL_FAMILY:-500x600x0.10}   # the pilot's held-out evaluation family
+# CHECKPOINT_DIR: reuse an earlier campaign's trained <method>.pt (generalization runs)
+CHECKPOINT_DIR=${CHECKPOINT_DIR:-}
 COLLECT_TIME_LIMIT=${COLLECT_TIME_LIMIT:-300}       # per-episode budget during collection
 COLLECT_WORKERS=${COLLECT_WORKERS:-32}               # parallel SCIP episodes (node has 64 cpus)
+
+CHECKPOINT_ARGS=()
+if [ -n "$CHECKPOINT_DIR" ]; then CHECKPOINT_ARGS=(--checkpoint-dir "$CHECKPOINT_DIR"); fi
 
 cd "$REPO"
 mkdir -p logs "$RESULTS"
@@ -69,6 +74,7 @@ $REPO/.venv-gpu/bin/python scripts/pilot_gasse.py \
     --eval-family "$EVAL_FAMILY" \
     --collect-time-limit "$COLLECT_TIME_LIMIT" \
     --collect-workers "$COLLECT_WORKERS" \
-    --results-dir "$RESULTS"
+    --results-dir "$RESULTS" \
+    "${CHECKPOINT_ARGS[@]}"
 
 echo "=== $(date) — done ==="
