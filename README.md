@@ -161,8 +161,8 @@ Reading notes, at pilot scale:
   slice of its published training regime, not its quality. Effective budgets
   consumed: tgppo 2 PPO updates (policy entropy ≈ ln 54, i.e. still near
   uniform), sorrel 1 PPO epoch after its offline stage, bbmdp 100 episodes /
-  11.8k gradient steps, retrobranching 9 episodes, fmsts 1k iterations, the
-  scavuzzo mdp/tmdp+dfs variants likewise. planbb is the only RL method that
+  11.8k gradient steps, retrobranching 100 episodes / 7.7k gradient updates,
+  fmsts 1k iterations, the scavuzzo mdp/tmdp+dfs variants likewise. planbb is the only RL method that
   got a full training budget (62 500 steps, 21.5 h on an H100) — and, notably,
   the only RL method above relpscost. Convergence campaigns for the ‡ methods
   are the next step before the G2 freeze.
