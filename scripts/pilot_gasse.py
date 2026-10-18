@@ -1069,7 +1069,12 @@ def train_policy(
     print(f"[train] checkpoint saved to {checkpoint}")
 
 
-def run_benchmark(checkpoint: Path, results_dir: Path, kind: str = "gasse") -> dict:
+def run_benchmark(
+    checkpoint: Path,
+    results_dir: Path,
+    kind: str = "gasse",
+    time_limit: float = EVAL_BUDGET["limits/time"],
+) -> dict:
     """The trained policy vs the classical baselines on the pilot grid."""
     methods: dict[str, Method] = dict(BASELINE_METHODS)
     methods[kind] = METHOD_SPECS[kind]["method"](checkpoint)
@@ -1082,7 +1087,7 @@ def run_benchmark(checkpoint: Path, results_dir: Path, kind: str = "gasse") -> d
                 split="test",
                 seeds=EVAL_SEEDS,
                 profile="default",
-                budget=dict(EVAL_BUDGET),
+                budget={"limits/time": time_limit, "display/verblevel": 0},
             )
             for name in methods
         ]
@@ -1122,6 +1127,13 @@ def summarize(runner: Runner, config: ExperimentConfig, results_dir: Path) -> di
         if method != "default"
     }
     sgms = {method: sgm_of_ratios(nodes[method], nodes["default"]) for method in ratios}
+    # Censoring must be visible next to every SGM: a run stopped at the wall
+    # limit reports the nodes it reached, so a censored SGM reads low.
+    n_timelimit = {
+        method: sum(1 for status in per_status.values() if status != "optimal")
+        for method, per_status in statuses.items()
+    }
+    n_runs = {method: len(per_status) for method, per_status in statuses.items()}
 
     print("\nPilot summary — mean B&B nodes per instance (default solver = 1.000x):")
     header = f"{'instance':<10}" + "".join(f"{m:>12}" for m in nodes)
@@ -1129,9 +1141,11 @@ def summarize(runner: Runner, config: ExperimentConfig, results_dir: Path) -> di
     for instance in next(iter(nodes.values())):
         row = f"{instance:<10}" + "".join(f"{nodes[m][instance]:>12.1f}" for m in nodes)
         print(row)
-    print("\nSGM of paired node ratios vs default:")
+    print("\nSGM of paired node ratios vs default (timelimits: runs stopped at the wall limit):")
     for method, sgm in sorted(sgms.items(), key=lambda kv: kv[1]):
-        print(f"  {method:<10} {sgm:.3f}x")
+        tl = n_timelimit.get(method, 0)
+        flag = f"  ({tl}/{n_runs[method]} timelimit)" if tl else ""
+        print(f"  {method:<10} {sgm:.3f}x{flag}")
 
     summary = {
         "nodes": nodes,
@@ -1140,6 +1154,8 @@ def summarize(runner: Runner, config: ExperimentConfig, results_dir: Path) -> di
         "sgm": sgms,
         "n_instances": len(next(iter(nodes.values()))),
         "n_seeds": len(EVAL_SEEDS),
+        "n_timelimit": n_timelimit,
+        "eval_time_limit": config.cells[0].budget["limits/time"],
     }
     (results_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, default=float)
@@ -1175,6 +1191,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--eval-family", type=parse_family, default=EVAL_FAMILY, metavar="RxCxDENSITY"
+    )
+    parser.add_argument(
+        "--eval-time-limit",
+        type=float,
+        default=EVAL_BUDGET["limits/time"],
+        help="per-run wall-clock limit on the eval grid (default 120 s); raise it "
+        "when the eval family censors runs — every SGM of a censored grid reads low",
     )
     parser.add_argument(
         "--collect-time-limit",
@@ -1357,7 +1380,7 @@ def main() -> None:
             )
     else:
         print(f"[train] reusing checkpoint {checkpoint}")
-    run_benchmark(checkpoint, results_dir, kind=args.method)
+    run_benchmark(checkpoint, results_dir, kind=args.method, time_limit=args.eval_time_limit)
 
 
 if __name__ == "__main__":

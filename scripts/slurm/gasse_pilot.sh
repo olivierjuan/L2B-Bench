@@ -50,6 +50,7 @@ EVAL_FAMILY=${EVAL_FAMILY:-500x600x0.10}   # the pilot's held-out evaluation fam
 # CHECKPOINT_DIR: reuse an earlier campaign's trained <method>.pt (generalization runs)
 CHECKPOINT_DIR=${CHECKPOINT_DIR:-}
 COLLECT_TIME_LIMIT=${COLLECT_TIME_LIMIT:-300}       # per-episode budget during collection
+EVAL_TIME_LIMIT=${EVAL_TIME_LIMIT:-120}            # per-run eval budget; raise on families that censor
 COLLECT_WORKERS=${COLLECT_WORKERS:-32}               # parallel SCIP episodes (node has 64 cpus)
 
 CHECKPOINT_ARGS=()
@@ -73,6 +74,7 @@ $REPO/.venv-gpu/bin/python scripts/pilot_gasse.py \
     --train-family "$TRAIN_FAMILY" \
     --eval-family "$EVAL_FAMILY" \
     --collect-time-limit "$COLLECT_TIME_LIMIT" \
+    --eval-time-limit "$EVAL_TIME_LIMIT" \
     --collect-workers "$COLLECT_WORKERS" \
     --results-dir "$RESULTS" \
     "${CHECKPOINT_ARGS[@]}"
