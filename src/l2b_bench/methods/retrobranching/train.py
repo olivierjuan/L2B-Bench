@@ -52,6 +52,8 @@ GAMMA = 0.99
 BATCH_SIZE = 128
 BUFFER_CAPACITY = 100_000
 BUFFER_MIN_LENGTH = 20_000
+#: Pilot knob: snapshot cadence (episodes) for convergence campaigns.
+SNAPSHOT_EVERY_EPISODES = 25
 STEPS_PER_UPDATE = 10
 EPSILON = 0.025
 SOFT_UPDATE_TAU = 0.0001
@@ -334,12 +336,19 @@ def train(
     buffer = ReplayBuffer(BUFFER_CAPACITY)
     rng = np.random.default_rng(seed)
 
-    def save() -> None:
+    def save(snapshot: bool = False) -> None:
         """Checkpoint after every episode — a cluster job killed at its wall
-        time keeps everything learned so far."""
+        time keeps everything learned so far. A numbered copy every
+        ``SNAPSHOT_EVERY_EPISODES`` episodes lets a convergence campaign
+        evaluate each budget on the pilot grid."""
+        path = (
+            Path(f"{checkpoint}.e{episode_idx:04d}")
+            if snapshot
+            else checkpoint
+        )
         save_checkpoint(
             model.cpu(),
-            checkpoint,
+            path,
             extra={
                 "episodes": episode_idx,
                 "buffer_min_length": buffer_min_length,
@@ -376,7 +385,7 @@ def train(
             f"decisions={len(experiences)}  updates={total_updates}  "
             f"loss={loss_sum / max(total_updates, 1):.4f}"
         )
-        save()
+        save(snapshot=episode_idx % SNAPSHOT_EVERY_EPISODES == 0)
 
     log(f"[train] checkpoint saved to {checkpoint}")
     return model

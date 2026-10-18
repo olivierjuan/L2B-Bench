@@ -230,6 +230,34 @@ class TestTrain:
         for a, b in zip(loaded.parameters(), model.parameters()):
             assert torch.equal(a, b)
 
+    def test_train_writes_snapshots(self, tmp_path, monkeypatch):
+        """The numbered per-budget copies appear on their cadence (the
+        importlib dance: the package exports train, shadowing the module)."""
+        import importlib
+
+        retro_train = importlib.import_module(
+            "l2b_bench.methods.retrobranching.train"
+        )
+        monkeypatch.setattr(retro_train, "SNAPSHOT_EVERY_EPISODES", 3)
+        checkpoint = tmp_path / "retrobranching.pt"
+        train(
+            _instances(6, seed=11),
+            checkpoint,
+            episodes=6,
+            buffer_min_length=10,
+            time_limit=10.0,
+            seed=0,
+            device=torch.device("cpu"),
+            log=lambda *_: None,
+        )
+        snapshots = sorted(tmp_path.glob("retrobranching.pt.e*"))
+        assert [p.name for p in snapshots] == [
+            "retrobranching.pt.e0003",
+            "retrobranching.pt.e0006",
+        ]
+        loaded = load_checkpoint(snapshots[0], device=torch.device("cpu"))
+        assert isinstance(loaded, RetroGCN)
+
 
 class TestPolicy:
     def test_retrobranching_method_is_runner_ready(self, tmp_path):
