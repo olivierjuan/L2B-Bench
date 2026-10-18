@@ -162,10 +162,13 @@ Reading notes, at pilot scale:
   consumed: tgppo 2 PPO updates (policy entropy ≈ ln 54, i.e. still near
   uniform), sorrel 1 PPO epoch after its offline stage, bbmdp 100 episodes /
   11.8k gradient steps, retrobranching 100 episodes / 7.7k gradient updates,
-  fmsts 1k iterations, the scavuzzo mdp/tmdp+dfs variants likewise. planbb is the only RL method that
-  got a full training budget (62 500 steps, 21.5 h on an H100) — and, notably,
-  the only RL method above relpscost. Convergence campaigns for the ‡ methods
-  are the next step before the G2 freeze.
+  fmsts 1k iterations, the scavuzzo mdp/tmdp+dfs variants likewise. planbb
+  ran the official gradient-step count (62 500) but starved on experience:
+  sequential self-play collected 65 episodes / 15.4k transitions — less than
+  the official regime's 40k-transition starting buffer (sized for 11
+  parallel actors) — and its loss plateaued from ~step 36k on the static
+  replay. Convergence campaigns for the ‡ methods (planbb included, with a
+  larger experience budget) are the next step before the G2 freeze.
 - Sorrel hit the 120 s time limit on 23 of 30 runs at pilot scale — the PPO
   stage did not learn within the pilot budget, so its node ratios are
   right-censored by the budget rather than converged (the SGM is an
