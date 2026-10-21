@@ -215,7 +215,9 @@ def save_checkpoint(
     canonical padding shape."""
     torch.save(
         {
-            "state_dict": model.cpu().state_dict(),
+            # A CPU copy of the weights: ``model.cpu()`` would move the live
+            # model mid-training (the snapshot path saves inside the loop).
+            "state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
             "pca_mean": torch.as_tensor(np.asarray(mean), dtype=torch.float64),
             "pca_components": torch.as_tensor(
                 np.asarray(components), dtype=torch.float64
