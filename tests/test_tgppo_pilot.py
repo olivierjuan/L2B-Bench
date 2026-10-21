@@ -316,3 +316,51 @@ class TestPolicy:
         if obs is not None:
             action = policy.select_action(obs, action_set)
             assert action in np.asarray(action_set).tolist()
+
+
+def _fit_argmax_feature(fixed: bool, steps: int = 150) -> float:
+    """Supervised probe: train the actor to pick the candidate with the
+    largest feature 0; returns the final cross-entropy."""
+    torch.manual_seed(0)
+    actor = Actor(fixed=fixed)
+    optimizer = torch.optim.AdamW(actor.parameters(), lr=1e-4, weight_decay=1e-2)
+    n_cands, batch = 20, 32
+    for _ in range(steps):
+        cands = torch.randn(batch, n_cands, 25)
+        target = cands[:, :, 0].argmax(-1)
+        probs = actor(cands, torch.randn(batch, 8), torch.randn(batch, 53))
+        loss = torch.nn.functional.nll_loss(torch.log(probs + 1e-12), target)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    return float(loss)
+
+
+class TestFixedVariant:
+    """The released architecture's collapse, and the tgppo-fixed variant."""
+
+    def test_released_actor_outputs_a_uniform_policy(self):
+        # Pinned finding (same result on the official modules): every
+        # candidate gets the same probability, at 1e-6.
+        torch.manual_seed(0)
+        probs = Actor().eval()(torch.randn(2, 40, 25), torch.randn(2, 8), torch.randn(2, 53))
+        assert torch.allclose(probs, torch.full_like(probs, 1 / 40), atol=1e-6)
+
+    def test_released_actor_cannot_learn_a_trivial_ranking(self):
+        uniform = float(np.log(20))
+        assert _fit_argmax_feature(fixed=False) == pytest.approx(uniform, abs=1e-3)
+
+    def test_fixed_actor_learns_a_trivial_ranking(self):
+        assert _fit_argmax_feature(fixed=True) < 0.85 * float(np.log(20))
+
+    def test_fixed_flag_round_trips_through_the_checkpoint(self, tmp_path):
+        checkpoint = tmp_path / "tgppo-fixed.pt"
+        save_checkpoint(Actor(fixed=True), Critic(fixed=True), checkpoint)
+        actor, critic = load_checkpoint(checkpoint, device=torch.device("cpu"))
+        assert actor.fixed and critic.fixed
+        method = tgppo_method(checkpoint, fixed=True)
+        assert method.name == "tgppo-fixed"
+        assert method.fidelity == "tgppo"
+        x = (torch.randn(3, 7, 25), torch.randn(3, 8), torch.randn(3, 53))
+        assert critic(*x).shape == (3, 1)
+        assert actor(*x).shape == (3, 7)

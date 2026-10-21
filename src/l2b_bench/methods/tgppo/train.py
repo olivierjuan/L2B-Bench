@@ -543,6 +543,7 @@ def train(
     seed: int = 0,
     device: torch.device | None = None,
     log=print,
+    fixed: bool = False,
 ) -> tuple[Actor, Critic]:
     """The official RL loop: collect ``EPISODES_PER_UPDATE`` rollout episodes,
     then one PPO update; repeat until ``episodes`` are consumed.
@@ -558,8 +559,10 @@ def train(
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    actor = Actor().to(device)
-    critic = Critic().to(device)
+    # fixed=True: the tgppo-fixed variant (see model.py) — the released
+    # architecture cannot move off the uniform policy.
+    actor = Actor(fixed=fixed).to(device)
+    critic = Critic(fixed=fixed).to(device)
     actor_optimizer = torch.optim.AdamW(
         actor.parameters(), lr=ACTOR_LR, weight_decay=WEIGHT_DECAY
     )

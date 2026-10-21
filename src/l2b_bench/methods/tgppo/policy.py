@@ -51,19 +51,22 @@ class TGPPOPolicy:
         return int(np.asarray(action_set)[action])
 
 
-def tgppo_method(checkpoint: str | Path) -> Method:
+def tgppo_method(checkpoint: str | Path, fixed: bool = False) -> Method:
     """The tgppo method, ready for the runner's method table.
 
     The fidelity profile ``tgppo`` recharges the native regime (R5.4): the
     ``BranchingStateObservation`` state and the sandbox protocol; the policy
     is the PPO-trained actor-critic checkpoint (sampled actions).
+    ``fixed=True`` names the ``tgppo-fixed`` variant (same regime; the
+    architecture flag itself travels in the checkpoint's hparams).
     """
     return Method(
-        name="tgppo",
+        name="tgppo-fixed" if fixed else "tgppo",
         policy=lambda: TGPPOPolicy.from_checkpoint(checkpoint),
         config={
             "checkpoint": str(checkpoint),
-            "architecture": "Tree-Gate PPO actor-critic transformer (benmhamed-a, 2025)",
+            "architecture": "Tree-Gate PPO actor-critic transformer (benmhamed-a, 2025)"
+            + (", fixed: BiMatchingNet residual + 8-unit score head" if fixed else ""),
         },
         fidelity="tgppo",
     )

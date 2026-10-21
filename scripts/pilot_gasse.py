@@ -165,6 +165,14 @@ METHOD_SPECS = {
         "method": tgppo_method,
         "cache_name": None,
     },
+    # The released TGPPO actor outputs a uniform policy (see the tgppo model
+    # docstring); tgppo-fixed restores per-candidate scores — a documented
+    # deviation, same PPO regime and budget knobs.
+    "tgppo-fixed": {
+        "prob": None,
+        "method": lambda checkpoint: tgppo_method(checkpoint, fixed=True),
+        "cache_name": None,
+    },
     # SORREL collects suboptimal VHB demonstrations (full strong branching
     # w.p. 0.05, else pseudocosts) over the pseudo branching candidates — its
     # own cache: the tree-MDP samples carry two children's graphs, nothing
@@ -577,6 +585,7 @@ def train_tgppo(
     checkpoint: Path,
     train_family: dict,
     time_limit: float = 60.0,
+    fixed: bool = False,
 ) -> None:
     """The official PPO loop: from scratch, no imitation stage.
 
@@ -599,6 +608,7 @@ def train_tgppo(
         episodes=episodes,
         time_limit=time_limit,
         seed=0,
+        fixed=fixed,
     )
 
 
@@ -1239,7 +1249,7 @@ def main() -> None:
                 args.train_family,
                 time_limit=args.collect_time_limit,
             )
-        elif args.method == "tgppo":
+        elif args.method in ("tgppo", "tgppo-fixed"):
             # RL from scratch under the paper's sandbox protocol — no expert
             # data to collect (--epochs again has no role in the PPO loop).
             train_tgppo(
@@ -1247,6 +1257,7 @@ def main() -> None:
                 checkpoint,
                 args.train_family,
                 time_limit=args.collect_time_limit,
+                fixed=args.method == "tgppo-fixed",
             )
         elif args.method == "bbmdp":
             # RL from scratch on the corrected vanilla MDP — no expert data

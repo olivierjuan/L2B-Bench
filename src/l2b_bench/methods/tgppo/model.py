@@ -15,6 +15,22 @@ repository (github.com/benmhamed-a/tgppo-aaai-26):
 
 The actor returns action *probabilities* (softmax over candidates, pads
 masked out); the official PPO loss consumes probabilities, not logits.
+
+``fixed=True`` builds the ``tgppo-fixed`` variant, a documented deviation:
+as released, both nets output the same value for every candidate (the
+actor's policy is uniform to 1e-7 at initialization and stays so through
+training — verified on the official modules themselves). Two collapse
+points, two fixes:
+
+- ``BiMatchingNet`` gives each candidate the *tree* vector weighted by a
+  scalar softmax score (~1/L) — the encoded candidate features only reach
+  the head through that scalar. Fix: a residual connection
+  (``refined + transformed``).
+- The gated pyramid narrows to 2 units under ``LayerNorm(2)``, which maps
+  any 2-vector to ±(1, -1) (or to 0 when the units nearly agree): at most
+  one bit per candidate survives. Fix: stop the pyramid at 8 units (the
+  official module's own default ``infimum``) and score with a final
+  ``Linear(8, 1)``.
 """
 
 import torch
@@ -60,6 +76,7 @@ class TreeGateBranchingNet(nn.Module):
         norm: str = "layer",
         depth: int = 2,
         hidden_size: int = 128,
+        score_head: bool = False,
     ) -> None:
         super().__init__()
         norm_layer = _get_norm_layer(norm)
@@ -102,6 +119,9 @@ class TreeGateBranchingNet(nn.Module):
             gating.append(nn.Linear(hidden_size, self.n_attentional_units))
         gating.append(nn.Sigmoid())
         self.gating_net = nn.Sequential(*gating)
+        # tgppo-fixed: one ungated linear score on top of the pyramid's last
+        # (wider than one unit) layer, instead of narrowing to a single unit.
+        self.score_head = nn.Linear(input_dim, 1) if score_head else None
 
     def forward(
         self, cands_state_mat: torch.Tensor, tree_state: torch.Tensor
@@ -117,6 +137,8 @@ class TreeGateBranchingNet(nn.Module):
                 cands_state_mat = cands_state_mat * attn_slice
             cands_state_mat = layer(cands_state_mat)
             start = end
+        if self.score_head is not None:
+            return self.score_head(cands_state_mat).squeeze(-1)
         if cands_state_mat.size(-1) == 1:
             return cands_state_mat.squeeze(-1)
         # 3D -> mean over candidates (the critic's value); 2D -> one score
@@ -174,6 +196,7 @@ class Actor(nn.Module):
         num_heads: int = 4,
         num_layers: int = 2,
         dropout: float = 0.0,
+        fixed: bool = False,
     ) -> None:
         super().__init__()
         # Recorded in the checkpoint so load_checkpoint can rebuild the net
@@ -186,7 +209,9 @@ class Actor(nn.Module):
             "num_heads": num_heads,
             "num_layers": num_layers,
             "dropout": dropout,
+            "fixed": fixed,
         }
+        self.fixed = fixed
         self.var_embedding = nn.Sequential(
             nn.LayerNorm(var_dim), nn.Linear(var_dim, hidden_dim)
         )
@@ -208,10 +233,11 @@ class Actor(nn.Module):
             branch_size=hidden_dim,
             tree_state_size=hidden_dim,
             dim_reduce_factor=2,
-            infimum=1,
+            infimum=8 if fixed else 1,
             norm="layer",
             depth=2,
             hidden_size=hidden_dim,
+            score_head=fixed,
         )
 
     def forward(
@@ -243,6 +269,8 @@ class Actor(nn.Module):
         ).transpose(0, 1)
 
         refined = self.tree_refinement(tree_features, transformed, padding_mask)
+        if self.fixed:
+            refined = refined + transformed
         action_logits = self.output_layer(refined, tree_features)
         action_logits = action_logits.masked_fill(padding_mask, float("-inf"))
         return F.softmax(action_logits, dim=-1)
@@ -260,6 +288,7 @@ class Critic(nn.Module):
         num_heads: int = 4,
         num_layers: int = 2,
         dropout: float = 0.0,
+        fixed: bool = False,
     ) -> None:
         super().__init__()
         self.hparams = {
@@ -270,7 +299,9 @@ class Critic(nn.Module):
             "num_heads": num_heads,
             "num_layers": num_layers,
             "dropout": dropout,
+            "fixed": fixed,
         }
+        self.fixed = fixed
         self.var_embedding = nn.Sequential(
             nn.LayerNorm(var_dim), nn.Linear(var_dim, hidden_dim)
         )
@@ -296,10 +327,11 @@ class Critic(nn.Module):
             branch_size=hidden_dim,
             tree_state_size=hidden_dim,
             dim_reduce_factor=2,
-            infimum=1,
+            infimum=8 if fixed else 1,
             norm="layer",
             depth=2,
             hidden_size=hidden_dim,
+            score_head=fixed,
         )
 
     def forward(
@@ -324,6 +356,8 @@ class Critic(nn.Module):
         ).transpose(0, 1)
         tree_features = self.tree_embedding(torch.cat([node_state, mip_state], dim=-1))
         refined = self.tree_refinement(tree_features, transformed, padding_mask)
+        if self.fixed:
+            refined = refined + transformed
 
         valid_mask = (~padding_mask).unsqueeze(-1)
         pooled = (refined * valid_mask).sum(dim=1) / valid_mask.sum(dim=1).clamp(min=1)
