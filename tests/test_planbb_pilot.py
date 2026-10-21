@@ -633,3 +633,57 @@ class TestEpisode:
         assert trained_steps == 5  # the budget was reached, not restarted
         assert checkpoint.exists()  # completion writes the model checkpoint
         assert not resume_path.exists()  # and retires the snapshot
+
+
+class _Trajectory:
+    """Stub with the one thing the replay reads: the trajectory length."""
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __len__(self) -> int:
+        return self.n
+
+
+class TestPrioritizedReplay:
+    def test_new_positions_enter_at_the_max_priority(self):
+        from l2b_bench.methods.planbb.train import PrioritizedReplay
+
+        replay = PrioritizedReplay()
+        replay.add(_Trajectory(3))
+        assert np.array_equal(replay.priorities, np.ones(3))
+        replay.priorities[1] = 4.0
+        replay.add(_Trajectory(2))
+        assert np.array_equal(replay.priorities[3:], [4.0, 4.0])
+
+    def test_drawn_positions_are_consumed_once(self):
+        from l2b_bench.methods.planbb.train import PrioritizedReplay
+
+        replay = PrioritizedReplay()
+        replay.add(_Trajectory(50))
+        rng = np.random.default_rng(0)
+        batches = []
+        while replay.can_sample():
+            _samples, drawn = replay.sample(8, rng)
+            batches.append(drawn.tolist())
+            replay.consume(drawn)
+        # Full batches draw distinct positions while enough remain (6 x 8 = 48);
+        # the tail — 2 positions for a batch of 8 — falls back to replacement,
+        # as the official ``repl`` does. Every position is used, then none.
+        assert all(len(set(b)) == 8 for b in batches[:-1])
+        assert set(sum(batches, [])) == set(range(50))
+        assert not replay.can_sample()
+
+    def test_sampling_is_proportional_to_priority_to_the_alpha(self):
+        from l2b_bench.methods.planbb.train import PrioritizedReplay
+
+        replay = PrioritizedReplay()
+        replay.add(_Trajectory(2))
+        replay.priorities[:] = [1.0, 4.0]  # alpha 0.6: weights 1 and 4**0.6 = 2.297
+        rng = np.random.default_rng(1)
+        counts = np.zeros(2)
+        for _ in range(4000):
+            _samples, drawn = replay.sample(1, rng)
+            counts[drawn[0]] += 1
+        expected = 2.297 / (1 + 2.297)
+        assert counts[1] / counts.sum() == pytest.approx(expected, abs=0.03)

@@ -1,4 +1,4 @@
-"""PlanB&B — sequential training: self-play, uniform replay, the four
+"""PlanB&B — sequential training: self-play, prioritized replay, the four
 MuZero losses.
 
 Faithful port of the official repository (github.com/abfariah/planbb,
@@ -7,10 +7,12 @@ Faithful port of the official repository (github.com/abfariah/planbb,
 without the ray actor topology:
 
 - **Replay** — every stored trajectory contributes its visited positions;
-  batches sample ``(trajectory, position)`` pairs uniformly (the official's
-  released ``--use_priority --use_max_priority`` degenerates to uniform
-  sampling) and are thrown away after the step (no priority updates — the
-  official's ``new_priority = value_priority * 0``).
+  the released ``--use_priority --use_max_priority`` replay, ported as
+  is: a new position enters at the buffer's max priority, a batch is drawn
+  with probability proportional to priority^0.6 (``PRIORITY_ALPHA``), and
+  every position drawn has its priority set to 0 after the step (the
+  official's ``new_priority = value_priority * 0``) — so each transition
+  is consumed once, and the buffer keeps refilling with fresh self-play.
 - **Targets** — the non-reanalyze path: the policy target is the stored
   MCTS improved-policy distribution, the value target is the td reward sum
   plus the target model's scalar value of the n-step bootstrap frontier
@@ -141,16 +143,52 @@ class TrainBatch:
     target_value: np.ndarray  # [traj_obs][B][1]
 
 
-def sample_batch(
-    replay: List[PlanBBTrajectory],
-    batch_size: int,
-    rng: np.random.Generator,
-) -> List[Tuple[PlanBBTrajectory, int]]:
-    """Uniform sampling over (trajectory, position) pairs — the released
-    ``use_max_priority`` degenerates the priority tree to uniform."""
-    positions = [(traj, pos) for traj in replay for pos in range(len(traj))]
-    idxs = rng.choice(len(positions), size=batch_size, replace=len(positions) < batch_size)
-    return [positions[i] for i in idxs]
+#: The released ``priority_prob_alpha`` with ``--use_priority``.
+PRIORITY_ALPHA = 0.6
+
+
+class PrioritizedReplay:
+    """The official ``ReplayBuffer`` sampling, over (trajectory, position).
+
+    ``add`` gives every position of a new trajectory the buffer's max
+    priority (1 while the buffer is empty — the official ``max_prio``).
+    ``sample`` draws ``batch_size`` positions with probability proportional
+    to priority**PRIORITY_ALPHA, with replacement only when fewer positions
+    have non-zero priority than the batch needs (the official ``repl``).
+    ``consume`` zeroes the priorities of the drawn positions, which removes
+    them from later draws until the buffer is refilled."""
+
+    def __init__(self, alpha: float = PRIORITY_ALPHA) -> None:
+        self.alpha = alpha
+        self.positions: List[Tuple[PlanBBTrajectory, int]] = []
+        self.priorities = np.zeros(0, dtype=np.float64)
+
+    def __len__(self) -> int:
+        return len(self.positions)
+
+    def add(self, trajectory: PlanBBTrajectory) -> None:
+        max_prio = self.priorities.max() if len(self.priorities) else 0.0
+        max_prio = max_prio if max_prio > 0 else 1.0
+        self.positions.extend((trajectory, pos) for pos in range(len(trajectory)))
+        self.priorities = np.concatenate(
+            [self.priorities, np.full(len(trajectory), max_prio)]
+        )
+
+    def can_sample(self) -> bool:
+        return bool(np.any(self.priorities > 0))
+
+    def sample(
+        self, batch_size: int, rng: np.random.Generator
+    ) -> Tuple[List[Tuple[PlanBBTrajectory, int]], np.ndarray]:
+        probs = self.priorities**self.alpha
+        probs = probs / probs.sum()
+        n_nonzero = int(np.count_nonzero(probs))
+        replace = n_nonzero <= batch_size
+        idxs = rng.choice(len(self.positions), size=batch_size, replace=replace, p=probs)
+        return [self.positions[i] for i in idxs], idxs
+
+    def consume(self, idxs: np.ndarray) -> None:
+        self.priorities[idxs] = 0.0
 
 
 def make_batch(
@@ -512,7 +550,7 @@ def train(
     # itself is written only on completion — the pilot's "checkpoint exists"
     # test must mean "training finished", not "a snapshot exists".
     resume_path = Path(checkpoint).with_suffix(".train.pt")
-    replay: List[PlanBBTrajectory] = []
+    replay = PrioritizedReplay()
     n_transitions = 0
     trained_steps = 0
     n_episodes = 0
@@ -552,7 +590,7 @@ def train(
         model.train_mode()
         model.train()
         if trajectory is not None:
-            replay.append(trajectory)
+            replay.add(trajectory)
             n_transitions += len(trajectory)
 
     # Phase 1: random-action self-play until the replay is warm.
@@ -572,9 +610,10 @@ def train(
             # A resumed run starts with an empty replay (the trajectories are
             # not part of the snapshot): the empty-replay guard keeps the
             # loop self-play-first until the replay refills.
-            if trained_steps >= training_steps or n_transitions < 2 or not replay:
+            if trained_steps >= training_steps or n_transitions < 2 or not replay.can_sample():
                 break
-            samples = sample_batch(replay, batch_size, rng)
+            samples, drawn = replay.sample(batch_size, rng)
+            replay.consume(drawn)
             (
                 obs_lst,
                 obs_idx_lst,
