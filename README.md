@@ -123,7 +123,8 @@ B&B-node ratios vs the default solver (lower is better; 1.0× = SCIP default).
 | gasse-relpscost (control arm) | no | 3.766× |
 | sorrel ‡ | yes | 3.924× |
 | scavuzzo mdp ‡ | yes | 5.074× |
-| tgppo ‡ | yes | 7.728× |
+| tgppo § | yes | 7.728× |
+| tgppo-fixed (documented deviation, see §) | yes | *pending* |
 | scavuzzo tmdp+dfs ‡ | yes | 8.620× |
 | bbmdp ‡ | yes | 9.009× |
 | fmsts ‡ | yes | 20.263× |
@@ -159,8 +160,7 @@ Reading notes, at pilot scale:
   above are all train-family = eval-family.
 - ‡ **Undertrained at pilot scale** — the row measures the method at a small
   slice of its published training regime, not its quality. Effective budgets
-  consumed: tgppo 2 PPO updates (policy entropy ≈ ln 54, i.e. still near
-  uniform), sorrel 1 PPO epoch after its offline stage, bbmdp 100 episodes /
+  consumed: sorrel 1 PPO epoch after its offline stage, bbmdp 100 episodes /
   11.8k gradient steps, retrobranching 100 episodes / 7.7k gradient updates,
   fmsts 1k iterations, the scavuzzo mdp/tmdp+dfs variants likewise. planbb
   ran the official gradient-step count (62 500) but starved on experience:
@@ -169,6 +169,27 @@ Reading notes, at pilot scale:
   parallel actors) — and its loss plateaued from ~step 36k on the static
   replay. Convergence campaigns for the ‡ methods (planbb included, with a
   larger experience budget) are the next step before the G2 freeze.
+- § **TGPPO as released outputs a uniform policy — need to contact the
+  authors.** The tgppo actor gives every candidate the same probability
+  (uniform to 1e-7) at initialization and throughout training: all 39
+  snapshots of a 40-update convergence campaign (5 000 episodes), evaluated
+  on real branching states. The official modules from
+  [benmhamed-a/tgppo-aaai-26](https://github.com/benmhamed-a/tgppo-aaai-26),
+  run as released, do the same for every size and seed tried, and on a
+  trivial supervised ranking task their loss stays at exactly ln(n). The
+  port is faithful; two collapse points sit in the released architecture:
+  `BiMatchingNet` hands each candidate the tree vector weighted by a single
+  softmax scalar (~1/L), so the encoded candidate features barely reach the
+  head (spread across candidates 0.57 → 0.0035), and the gated output
+  pyramid narrows to 2 units under `LayerNorm(2)`, which keeps at most one
+  bit per candidate (logit spread 7e-8). The tgppo row is therefore uniform
+  random branching, whatever the budget. The official hyperparameters come
+  from an unpublished tuning file (`--best_params_json`), so the authors may
+  have run a different revision — we have not yet contacted them. The
+  **tgppo-fixed** variant (`--method tgppo-fixed`) adds a residual
+  connection around `BiMatchingNet` and stops the pyramid at 8 units (the
+  official module's own default `infimum`) under a `Linear(8, 1)` score; it
+  learns the probe task, and its PPO campaign is running.
 - Sorrel hit the 120 s time limit on 23 of 30 runs at pilot scale — the PPO
   stage did not learn within the pilot budget, so its node ratios are
   right-censored by the budget rather than converged (the SGM is an
